@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Couleurs de l'application (tu peux les changer ici) */
+:root {
+  --lagon: #0b6474;
+  --lagon-fonce: #084b57;
+  --hibiscus: #c23a5e;
+  --fond: #f4f7f6;
+  --encre: #15262b;
+}
+
+body {
+  background: var(--fond);
+  color: var(--encre);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+@layer components {
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    border-radius: .75rem; padding: .7rem 1.1rem; font-weight: 600; line-height: 1.2;
+    transition: background-color .15s, opacity .15s; cursor: pointer; text-align: center;
+  }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--lagon); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--lagon-fonce); }
+  .btn-secondary { background: #fff; color: var(--encre); border: 1px solid #cfdcd9; }
+  .btn-secondary:hover:not(:disabled) { background: #eef3f2; }
+  .btn-danger { background: #fff; color: #b42336; border: 1px solid #efc2ca; }
+  .btn-danger:hover:not(:disabled) { background: #fdf0f2; }
+  .input {
+    width: 100%; border: 1px solid #cfdcd9; border-radius: .7rem; padding: .7rem .85rem; background: #fff;
+    font-size: 1rem;
+  }
+  .input:focus { outline: 3px solid color-mix(in srgb, var(--lagon) 35%, transparent); border-color: var(--lagon); }
+  .label { display: block; font-weight: 600; font-size: .9rem; margin-bottom: .3rem; }
+  .hint { font-size: .8rem; color: #5b6f73; margin-top: .25rem; }
+  .panel { background: #fff; border: 1px solid #dde7e5; border-radius: 1rem; padding: 1.25rem; }
+  .alert-error { background: #fdf0f2; border: 1px solid #efc2ca; color: #8f1d2e; border-radius: .7rem; padding: .7rem .9rem; }
+  .alert-ok { background: #e6f4ec; border: 1px solid #b7dcc6; color: #1b5e3a; border-radius: .7rem; padding: .7rem .9rem; }
+}
