@@ -1,18 +1,29 @@
 import "server-only";
+import { activeCoupons } from "@/lib/card-state";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Business, Card, CardBundle, Customer, Program } from "@/lib/types";
+import type { Business, Card, CardBundle, CatalogReward, Coupon, Customer, Program, Tier } from "@/lib/types";
 
-const SELECT = "*, customers(*), loyalty_programs(*, businesses(*))";
+const SELECT =
+  "*, customers(*), coupons(*), loyalty_programs(*, businesses(*), program_tiers(*), reward_catalog(*))";
 
 type Row = Card & {
   customers: Customer;
-  loyalty_programs: Program & { businesses: Business };
+  coupons: Coupon[];
+  loyalty_programs: Program & { businesses: Business; program_tiers: Tier[]; reward_catalog: CatalogReward[] };
 };
 
 function toBundle(row: Row): CardBundle {
-  const { customers, loyalty_programs, ...card } = row;
-  const { businesses, ...program } = loyalty_programs;
-  return { card, customer: customers, program, business: businesses };
+  const { customers, loyalty_programs, coupons, ...card } = row;
+  const { businesses, program_tiers, reward_catalog, ...program } = loyalty_programs;
+  return {
+    card,
+    customer: customers,
+    program,
+    business: businesses,
+    tiers: [...(program_tiers ?? [])].sort((a, b) => Number(a.min_value) - Number(b.min_value)),
+    catalog: [...(reward_catalog ?? [])].sort((a, b) => a.cost - b.cost),
+    coupons: activeCoupons(coupons ?? []),
+  };
 }
 
 /** Charge une carte complète en cherchant par une colonne (id, serial_number, web_token). */

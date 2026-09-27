@@ -24,8 +24,55 @@ export type Program = {
   back_text: string | null;
   max_stamps_per_day: number;
   is_active: boolean;
+  mode: RewardMode;
+  points_per_euro: number;
+  cashback_percent: number;
+  strip_image_url: string | null;
+  stamp_icon_url: string | null;
+  stamp_empty_icon_url: string | null;
+  stamp_color: string;
+  strip_overlay: number;
+  tiers_enabled: boolean;
+  tier_basis: "visits" | "spend";
+  welcome_offer: string | null;
+  birthday_offer: string | null;
+  max_purchase_amount: number;
   created_at: string;
   updated_at: string;
+};
+
+/** Les 3 façons de gagner : tampons, points (par €), cashback (% en €). */
+export type RewardMode = "stamps" | "points" | "cashback";
+
+export type Tier = {
+  id: string;
+  program_id: string;
+  name: string;
+  min_value: number;
+  perk: string | null;
+  color: string | null;
+  sort: number;
+};
+
+export type CatalogReward = {
+  id: string;
+  program_id: string;
+  name: string;
+  cost: number;
+  is_active: boolean;
+  sort: number;
+};
+
+export type Coupon = {
+  id: string;
+  card_id: string;
+  program_id: string;
+  title: string;
+  kind: "welcome" | "birthday" | "manual";
+  status: "active" | "used" | "expired";
+  expires_at: string | null;
+  used_at: string | null;
+  created_at: string;
 };
 
 export type Customer = {
@@ -55,6 +102,12 @@ export type Card = {
   wallet_platform: "apple" | "google" | "web" | null;
   google_saved: boolean;
   winback_sent_at: string | null;
+  points_balance: number;
+  cashback_balance: number;
+  lifetime_visits: number;
+  lifetime_spent: number;
+  lifetime_points: number;
+  tier_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -65,6 +118,12 @@ export type CardBundle = {
   customer: Customer;
   program: Program;
   business: Business;
+  /** Niveaux du programme (triés du plus bas au plus haut). */
+  tiers: Tier[];
+  /** Cadeaux du catalogue (mode points). */
+  catalog: CatalogReward[];
+  /** Offres encore utilisables par ce client. */
+  coupons: Coupon[];
 };
 
 export type NotificationRow = {

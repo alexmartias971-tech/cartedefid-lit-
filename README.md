@@ -28,3 +28,5 @@ npm run build    # vérifier que tout compile
 - `src/lib/notifications.ts` : envoi et programmation des notifications
 - `vercel.json` : réglages Vercel (région Paris, tâche de secours 1 fois par jour)
 - `supabase/03-envoi-automatique.sql` : envoi des notifications programmées toutes les 5 minutes (gratuit, via Supabase)
+- `supabase/04-recompenses-et-design.sql` : modes points / cashback, niveaux, catalogue, offres, décor et icônes de tampons
+- `supabase/05-anniversaires.sql` : offre d'anniversaire automatique

@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { statusSentence } from "@/lib/format";
+import { computeCardState } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -83,30 +83,47 @@ export async function upsertGoogleClass(program: Program, business: Business) {
   else await call("PUT", `/loyaltyClass/${id}`, body);
 }
 
-function objectBody({ card, customer, program, business }: CardBundle) {
-  const threshold = program.reward_threshold;
-  const stamps = Math.min(card.stamps_count, threshold);
-  const textModulesData = [
-    {
-      id: "status",
-      header: "Ta carte",
-      body: statusSentence(card.stamps_count, threshold, program.reward_description),
-    },
-    { id: "reward", header: "Cadeau", body: `${threshold} tampons = ${program.reward_description}` },
-  ];
-  if (card.last_message)
-    textModulesData.push({ id: "message", header: `Message de ${business.name}`, body: card.last_message });
+function objectBody({ card, customer, program, business, tiers, catalog, coupons }: CardBundle) {
+  const state = computeCardState(program, card, tiers, catalog);
+  const textModulesData = [{ id: "status", header: "Ta carte", body: state.sentence }];
+  if (coupons.length > 0) {
+    textModulesData.push({ id: "coupons", header: "Tes offres", body: coupons.map((c) => `• ${c.title}`).join("\n") });
+  }
+  if (state.tier) {
+    const next = state.nextTier ? ` Prochain niveau (${state.nextTier.tier.name}) dans ${state.nextTier.remaining}.` : "";
+    textModulesData.push({
+      id: "tier",
+      header: `Niveau ${state.tier.name}`,
+      body: `${state.tier.perk ?? ""}${next}`.trim() || state.tier.name,
+    });
+  }
+  if (program.mode === "points" && catalog.length > 0) {
+    textModulesData.push({
+      id: "catalog",
+      header: "Cadeaux",
+      body: catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n"),
+    });
+  }
+  textModulesData.push({ id: "rule", header: "Règle", body: state.rule });
+  if (card.last_message) textModulesData.push({ id: "message", header: `Message de ${business.name}`, body: card.last_message });
   if (program.back_text) textModulesData.push({ id: "info", header: "Informations", body: program.back_text });
 
+  // L'image est versionnée : Google ne la recharge que si l'adresse change
+  const version = new Date(card.updated_at).getTime();
   return {
     id: googleObjectId(card.serial_number),
     classId: googleClassId(program),
     state: "ACTIVE",
     accountId: card.serial_number,
     accountName: customer.first_name,
-    loyaltyPoints: { label: "Tampons", balance: { string: `${stamps}/${threshold}` } },
+    loyaltyPoints: { label: state.balanceLabel.toLowerCase(), balance: { string: state.balanceValue } },
+    ...(state.tier ? { secondaryLoyaltyPoints: { label: "niveau", balance: { string: state.tier.name } } } : {}),
     barcode: { type: "QR_CODE", value: card.serial_number, alternateText: customer.first_name },
-    hexBackgroundColor: program.background_color,
+    hexBackgroundColor: state.tier?.color || program.background_color,
+    heroImage: {
+      sourceUri: { uri: `${appUrl()}/api/strip/${card.serial_number}?v=${version}` },
+      contentDescription: { defaultValue: { language: "fr-FR", value: program.name } },
+    },
     textModulesData,
     linksModuleData: {
       uris: [{ uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" }],

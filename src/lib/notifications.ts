@@ -238,3 +238,41 @@ export async function runWinback(): Promise<number> {
   }
   return rows.length;
 }
+
+/** Offre d'anniversaire : ajoutée sur la carte le jour J (valable 30 jours), avec notification si le client accepte. */
+export async function runBirthdays(): Promise<number> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc("birthday_cards_today");
+  if (error) {
+    console.error("[runBirthdays]", error.message);
+    return 0;
+  }
+  type Row = {
+    card_id: string;
+    program_id: string;
+    offer: string;
+    first_name: string;
+    business_name: string;
+    marketing_optin: boolean;
+  };
+  let count = 0;
+  for (const row of (data ?? []) as Row[]) {
+    const { error: insertError } = await supabase.from("coupons").insert({
+      card_id: row.card_id,
+      program_id: row.program_id,
+      title: row.offer,
+      kind: "birthday",
+      expires_at: new Date(Date.now() + 30 * DAY).toISOString(),
+    });
+    if (insertError) continue; // déjà offerte cette année
+    count++;
+    const message = `🎂 Joyeux anniversaire ${row.first_name} ! ${row.business_name} t'offre : ${row.offer}`.slice(0, 180);
+    await supabase
+      .from("cards")
+      .update(row.marketing_optin ? { last_message: message } : { updated_at: new Date().toISOString() })
+      .eq("id", row.card_id);
+    const bundles = await loadCardBundlesByIds([row.card_id]);
+    await syncCards(bundles, row.marketing_optin ? { header: row.business_name, body: message } : undefined);
+  }
+  return count;
+}

@@ -40,10 +40,12 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const supabase = createAdminClient();
   const { data: business } = await supabase
     .from("businesses")
-    .select("id, status, loyalty_programs(id, is_active)")
+    .select("id, status, loyalty_programs(id, is_active, welcome_offer)")
     .eq("slug", slug)
     .maybeSingle();
-  const program = (business?.loyalty_programs as unknown as { id: string; is_active: boolean } | null) ?? null;
+  const program =
+    (business?.loyalty_programs as unknown as { id: string; is_active: boolean; welcome_offer: string | null } | null) ??
+    null;
   if (!business || business.status !== "active" || !program?.is_active) {
     return { error: "Ce programme de fidélité n'est pas disponible." };
   }
@@ -100,9 +102,20 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const { data: card, error: cardError } = await supabase
     .from("cards")
     .insert({ customer_id: customerId, program_id: program.id })
-    .select("web_token")
+    .select("id, web_token")
     .single();
   if (cardError || !card) return { error: "Création de la carte impossible. Réessaie dans un instant." };
+
+  // Offre de bienvenue (valable 30 jours)
+  if (program.welcome_offer) {
+    await supabase.from("coupons").insert({
+      card_id: card.id,
+      program_id: program.id,
+      title: program.welcome_offer,
+      kind: "welcome",
+      expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+    });
+  }
 
   redirect(`/carte/${card.web_token}`);
 }

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { runDueNotifications, runWinback } from "@/lib/notifications";
+import { runBirthdays, runDueNotifications, runWinback } from "@/lib/notifications";
 
 export const maxDuration = 300;
 
 /**
  * Tâche planifiée (toutes les 5 minutes via supabase/03-envoi-automatique.sql, + 1 fois par jour via vercel.json) :
- * envoie les notifications programmées et les messages "Tu nous manques".
+ * envoie les notifications programmées, les messages "Tu nous manques" et les offres d'anniversaire.
  * Protégée par CRON_SECRET : Vercel l'envoie automatiquement dans l'en-tête Authorization.
  */
 export async function GET(request: Request) {
@@ -15,5 +15,6 @@ export async function GET(request: Request) {
   }
   const sent = await runDueNotifications();
   const winback = await runWinback();
-  return NextResponse.json({ ok: true, notifications: sent, winback });
+  const birthdays = await runBirthdays();
+  return NextResponse.json({ ok: true, notifications: sent, winback, birthdays });
 }

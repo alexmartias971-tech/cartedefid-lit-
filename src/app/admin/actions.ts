@@ -19,18 +19,68 @@ const text = (fd: FormData, key: string) => String(fd.get(key) ?? "").trim();
 const optional = (fd: FormData, key: string) => text(fd, key) || null;
 const int = (fd: FormData, key: string) => Number.parseInt(text(fd, key), 10);
 
-/** Envoie le logo dans Supabase Storage et renvoie son adresse publique. */
-async function uploadLogo(file: File, businessId: string): Promise<string> {
+const IMAGE_LABELS: Record<string, string> = {
+  logo: "Le logo",
+  strip: "L'image de décor",
+  stamp: "L'icône de tampon",
+  "stamp-empty": "L'icône de tampon vide",
+};
+
+/** Envoie une image (logo, décor, icône) dans Supabase Storage et renvoie son adresse publique. */
+async function uploadImage(file: File, businessId: string, kind: keyof typeof IMAGE_LABELS): Promise<string> {
   const types: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
   const ext = types[file.type];
-  if (!ext) throw new Error("Le logo doit être une image PNG, JPG ou WEBP.");
-  if (file.size > 3 * 1024 * 1024) throw new Error("Le logo doit faire moins de 3 Mo.");
+  const label = IMAGE_LABELS[kind];
+  if (!ext) throw new Error(`${label} doit être une image PNG, JPG ou WEBP.`);
+  if (file.size > 3 * 1024 * 1024) throw new Error(`${label} doit faire moins de 3 Mo.`);
 
   const supabase = createAdminClient();
-  const path = `${businessId}/logo-${Date.now()}.${ext}`;
+  const path = `${businessId}/${kind}-${Date.now()}.${ext}`;
   const { error } = await supabase.storage.from("logos").upload(path, file, { contentType: file.type, upsert: true });
-  if (error) throw new Error(`Envoi du logo impossible : ${error.message}`);
+  if (error) throw new Error(`Envoi de l'image impossible : ${error.message}`);
   return supabase.storage.from("logos").getPublicUrl(path).data.publicUrl;
+}
+
+const fileOf = (fd: FormData, key: string): File | null => {
+  const f = fd.get(key);
+  return f instanceof File && f.size > 0 ? f : null;
+};
+const num = (fd: FormData, key: string) => Number.parseFloat(text(fd, key).replace(",", "."));
+
+type TierInput = { id?: string; name: string; min_value: number; perk: string | null; color: string | null };
+type CatalogInput = { id?: string; name: string; cost: number };
+
+function parseJsonList<T>(raw: string): T[] {
+  try {
+    const v = JSON.parse(raw || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remplace la liste (niveaux ou cadeaux) en gardant les lignes existantes (pour ne pas perdre l'historique). */
+async function syncList(
+  table: "program_tiers" | "reward_catalog",
+  programId: string,
+  rows: Record<string, unknown>[],
+) {
+  const supabase = createAdminClient();
+  const { data: existing } = await supabase.from(table).select("id").eq("program_id", programId);
+  const keep = new Set(rows.map((r) => r.id).filter(Boolean) as string[]);
+  const toDelete = (existing ?? []).map((r: { id: string }) => r.id).filter((id) => !keep.has(id));
+  if (toDelete.length > 0) await supabase.from(table).delete().in("id", toDelete);
+  for (const [i, row] of rows.entries()) {
+    const { id, ...fields } = row;
+    const values = { ...fields, sort: i, program_id: programId };
+    if (id && (existing ?? []).some((e: { id: string }) => e.id === id)) {
+      const { error } = await supabase.from(table).update(values).eq("id", id as string);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await supabase.from(table).insert(values);
+      if (error) throw new Error(error.message);
+    }
+  }
 }
 
 /** Choisit une adresse unique : boulangerie-du-bourg, puis boulangerie-du-bourg-2… */
@@ -74,23 +124,51 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
   const businessId = text(fd, "business_id");
   const name = text(fd, "name");
   const programName = text(fd, "program_name");
+  const mode = text(fd, "mode") as Program["mode"];
   const reward = text(fd, "reward_description");
   const threshold = int(fd, "reward_threshold");
   const maxStamps = int(fd, "max_stamps_per_day");
   const maxNotifs = int(fd, "max_notifications_per_week");
+  const pointsPerEuro = num(fd, "points_per_euro");
+  const cashbackPercent = num(fd, "cashback_percent");
+  const maxPurchase = num(fd, "max_purchase_amount");
+  const overlay = int(fd, "strip_overlay");
+  const tiersEnabled = fd.get("tiers_enabled") === "on";
+  const tierBasis = text(fd, "tier_basis") === "spend" ? "spend" : "visits";
   const colors = {
     background_color: text(fd, "background_color"),
     foreground_color: text(fd, "foreground_color"),
     label_color: text(fd, "label_color"),
+    stamp_color: text(fd, "stamp_color") || "#FFFFFF",
   };
+
+  const tiers = parseJsonList<TierInput>(text(fd, "tiers_json"))
+    .map((t) => ({
+      id: t.id,
+      name: String(t.name ?? "").trim().slice(0, 30),
+      min_value: Number(t.min_value) || 0,
+      perk: String(t.perk ?? "").trim().slice(0, 120) || null,
+      color: t.color && isHexColor(t.color) ? t.color : null,
+    }))
+    .filter((t) => t.name);
+  const catalog = parseJsonList<CatalogInput>(text(fd, "catalog_json"))
+    .map((r) => ({ id: r.id, name: String(r.name ?? "").trim().slice(0, 60), cost: Math.round(Number(r.cost)) }))
+    .filter((r) => r.name && r.cost > 0);
 
   if (!name) return { error: "Indique le nom de l'entreprise." };
   if (!programName) return { error: "Indique le nom de la carte." };
-  if (!reward) return { error: "Indique le cadeau." };
-  if (!(threshold >= 2 && threshold <= 50)) return { error: "Le nombre de tampons doit être entre 2 et 50." };
-  if (!(maxStamps >= 1 && maxStamps <= 10)) return { error: "Tampons par jour : entre 1 et 10." };
+  if (!["stamps", "points", "cashback"].includes(mode)) return { error: "Choisis un mode de récompense." };
+  if (mode === "stamps" && !reward) return { error: "Indique le cadeau obtenu avec les tampons." };
+  if (mode === "stamps" && !(threshold >= 2 && threshold <= 50)) return { error: "Le nombre de tampons doit être entre 2 et 50." };
+  if (mode === "points" && !(pointsPerEuro > 0 && pointsPerEuro <= 100)) return { error: "Points par euro : entre 0,1 et 100." };
+  if (mode === "points" && catalog.length === 0) return { error: "Ajoute au moins un cadeau au catalogue (ex : 100 points = 1 café)." };
+  if (mode === "cashback" && !(cashbackPercent > 0 && cashbackPercent <= 50)) return { error: "Cashback : entre 0,1 % et 50 %." };
+  if (mode !== "stamps" && !(maxPurchase >= 1 && maxPurchase <= 100000)) return { error: "Montant maximum d'un achat : entre 1 et 100 000 €." };
+  if (!(maxStamps >= 1 && maxStamps <= 10)) return { error: "Passages par jour : entre 1 et 10." };
   if (!(maxNotifs >= 0 && maxNotifs <= 7)) return { error: "Notifications par semaine : entre 0 et 7." };
+  if (!(overlay >= 0 && overlay <= 80)) return { error: "Voile sur le décor : entre 0 et 80 %." };
   if (!Object.values(colors).every(isHexColor)) return { error: "Une couleur n'est pas valide." };
+  if (tiersEnabled && tiers.length === 0) return { error: "Ajoute au moins un niveau, ou désactive les niveaux." };
 
   const businessFields = {
     name,
@@ -99,60 +177,73 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     email: optional(fd, "email"),
     max_notifications_per_week: maxNotifs,
   };
-  const programFields = {
+  const programFields: Record<string, unknown> = {
     name: programName,
-    reward_description: reward,
-    reward_threshold: threshold,
+    mode,
+    reward_description: reward || (mode === "points" ? "Cadeaux du catalogue" : "Cagnotte cashback"),
+    reward_threshold: threshold >= 2 && threshold <= 50 ? threshold : 10,
+    points_per_euro: pointsPerEuro > 0 ? pointsPerEuro : 1,
+    cashback_percent: cashbackPercent > 0 ? cashbackPercent : 5,
+    max_purchase_amount: maxPurchase >= 1 ? maxPurchase : 1000,
     max_stamps_per_day: maxStamps,
     back_text: optional(fd, "back_text"),
+    strip_overlay: overlay,
+    tiers_enabled: tiersEnabled,
+    tier_basis: tierBasis,
+    welcome_offer: optional(fd, "welcome_offer"),
+    birthday_offer: optional(fd, "birthday_offer"),
     ...colors,
   };
-  const logo = fd.get("logo");
-  const hasLogo = logo instanceof File && logo.size > 0;
+  if (fd.get("remove_strip_image") === "on") programFields.strip_image_url = null;
+  if (fd.get("remove_stamp_icon") === "on") programFields.stamp_icon_url = null;
+  if (fd.get("remove_stamp_empty_icon") === "on") programFields.stamp_empty_icon_url = null;
+
+  const logo = fileOf(fd, "logo");
+  const strip = fileOf(fd, "strip_image");
+  const stampIcon = fileOf(fd, "stamp_icon");
+  const stampEmpty = fileOf(fd, "stamp_empty_icon");
 
   let createdId: string | null = null;
   try {
+    let business: Business;
     if (!businessId) {
-      // --- Création ---
-      const { data: business, error } = await supabase
+      const { data, error } = await supabase
         .from("businesses")
         .insert({ ...businessFields, slug: await uniqueSlug(name) })
         .select("*")
         .single();
-      if (error || !business) return { error: `Création impossible : ${error?.message}` };
-
-      if (hasLogo) {
-        const logo_url = await uploadLogo(logo, business.id);
-        await supabase.from("businesses").update({ logo_url }).eq("id", business.id);
-      }
-      const { error: progError } = await supabase
-        .from("loyalty_programs")
-        .insert({ ...programFields, business_id: business.id });
-      if (progError) return { error: `Carte non créée : ${progError.message}` };
-
+      if (error || !data) return { error: `Création impossible : ${error?.message}` };
+      business = data as Business;
       createdId = business.id;
     } else {
-      // --- Modification ---
-      const update: Record<string, unknown> = { ...businessFields };
-      if (hasLogo) update.logo_url = await uploadLogo(logo, businessId);
-      const { data: business, error } = await supabase
-        .from("businesses")
-        .update(update)
-        .eq("id", businessId)
-        .select("*")
-        .single();
-      if (error || !business) return { error: `Modification impossible : ${error?.message}` };
+      const { data, error } = await supabase.from("businesses").update(businessFields).eq("id", businessId).select("*").single();
+      if (error || !data) return { error: `Modification impossible : ${error?.message}` };
+      business = data as Business;
+    }
 
-      const { data: program, error: progError } = await supabase
-        .from("loyalty_programs")
-        .update(programFields)
-        .eq("business_id", businessId)
-        .select("*")
-        .single();
-      if (progError || !program) return { error: `Carte non modifiée : ${progError?.message}` };
+    // Images envoyées
+    if (logo) {
+      const logo_url = await uploadImage(logo, business.id, "logo");
+      await supabase.from("businesses").update({ logo_url }).eq("id", business.id);
+      business.logo_url = logo_url;
+    }
+    if (strip) programFields.strip_image_url = await uploadImage(strip, business.id, "strip");
+    if (stampIcon) programFields.stamp_icon_url = await uploadImage(stampIcon, business.id, "stamp");
+    if (stampEmpty) programFields.stamp_empty_icon_url = await uploadImage(stampEmpty, business.id, "stamp-empty");
 
+    const { data: programData, error: progError } = businessId
+      ? await supabase.from("loyalty_programs").update(programFields).eq("business_id", business.id).select("*").single()
+      : await supabase.from("loyalty_programs").insert({ ...programFields, business_id: business.id }).select("*").single();
+    if (progError || !programData) return { error: `Carte non enregistrée : ${progError?.message}` };
+    const program = programData as Program;
+
+    await syncList("program_tiers", program.id, tiers);
+    await syncList("reward_catalog", program.id, catalog);
+    await supabase.rpc("refresh_program_tiers", { p_program_id: program.id });
+
+    if (businessId) {
       // Les cartes déjà dans les téléphones se mettent à jour en arrière-plan
-      after(() => resyncProgram(program as Program, business as Business));
+      after(() => resyncProgram(program, business));
       revalidatePath(`/admin/entreprises/${businessId}`);
     }
   } catch (err) {
@@ -164,6 +255,51 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     redirect(`/admin/entreprises/${createdId}?cree=1`);
   }
   return { ok: "Enregistré. Les cartes des clients se mettent à jour dans quelques instants." };
+}
+
+/** Offre ponctuelle : ajoute un coupon sur la carte de tous les clients (et prévient ceux qui acceptent les offres). */
+export async function sendOfferToAll(
+  businessId: string,
+  payload: { title: string; days: number | null; notify: boolean },
+): Promise<{ ok: boolean; error?: string; count?: number }> {
+  await requireAdmin();
+  const title = payload.title.trim().slice(0, 120);
+  if (!title) return { ok: false, error: "Écris l'offre (ex : -20 % sur tout ce week-end)." };
+  const supabase = createAdminClient();
+  const { data: program } = await supabase.from("loyalty_programs").select("id").eq("business_id", businessId).single();
+  if (!program) return { ok: false, error: "Carte introuvable." };
+  const { data: cards } = await supabase.from("cards").select("id").eq("program_id", program.id);
+  const ids = (cards ?? []).map((c: { id: string }) => c.id);
+  if (ids.length === 0) return { ok: false, error: "Aucun client pour le moment." };
+  const expires = payload.days && payload.days > 0 ? new Date(Date.now() + payload.days * 86400000).toISOString() : null;
+  for (let i = 0; i < ids.length; i += 500) {
+    const slice = ids.slice(i, i + 500);
+    const { error } = await supabase
+      .from("coupons")
+      .insert(slice.map((card_id) => ({ card_id, program_id: program.id, title, kind: "manual", expires_at: expires })));
+    if (error) return { ok: false, error: error.message };
+    await supabase.from("cards").update({ updated_at: new Date().toISOString() }).in("id", slice);
+  }
+  if (payload.notify) {
+    const res = await createNotification({
+      businessId,
+      message: `🎁 Nouvelle offre sur ta carte : ${title}`.slice(0, 180),
+      sendAt: new Date(),
+      repeatEveryDays: null,
+      repeatUntil: null,
+      createdBy: "admin",
+    });
+    if (!res.ok) {
+      revalidatePath(`/admin/entreprises/${businessId}`);
+      return { ok: true, count: ids.length, error: `Offre ajoutée, mais notification non envoyée : ${res.error}` };
+    }
+  } else {
+    after(async () => {
+      for (let i = 0; i < ids.length; i += 200) await syncCards(await loadCardBundlesByIds(ids.slice(i, i + 200)));
+    });
+  }
+  revalidatePath(`/admin/entreprises/${businessId}`);
+  return { ok: true, count: ids.length };
 }
 
 export async function setBusinessStatus(businessId: string, status: "active" | "suspended") {

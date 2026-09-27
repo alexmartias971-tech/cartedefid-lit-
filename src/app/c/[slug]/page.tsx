@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { programPitch } from "@/lib/card-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, Program } from "@/lib/types";
 import { registerCustomer } from "./actions";
@@ -32,7 +33,7 @@ export default async function SignupPage({ params }: { params: Promise<{ slug: s
         <h1 className="text-2xl font-bold mt-3">{business.name}</h1>
         {program && (
           <p className="mt-1">
-            {program.reward_threshold} passages = <strong>{program.reward_description}</strong>
+            <strong>{programPitch(program)}</strong>
           </p>
         )}
       </header>

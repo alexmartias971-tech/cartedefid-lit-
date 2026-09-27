@@ -5,7 +5,7 @@ import CardPreview from "@/components/CardPreview";
 import WalletButtons from "@/components/WalletButtons";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured, isGoogleConfigured } from "@/lib/env";
-import { statusSentence } from "@/lib/format";
+import { computeCardState, designFromProgram, formatEuro, secondaryField } from "@/lib/card-state";
 
 export const metadata = { title: "Ma carte de fidélité" };
 
@@ -24,7 +24,8 @@ export default async function CardPage({
   const { deja } = await searchParams;
   const bundle = await loadCardBundle("web_token", token);
   if (!bundle) notFound();
-  const { card, customer, program, business } = bundle;
+  const { card, customer, program, business, tiers, catalog, coupons } = bundle;
+  const state = computeCardState(program, card, tiers, catalog);
 
   const ua = (await headers()).get("user-agent") ?? "";
   const isIOS = /iPhone|iPad|iPod/i.test(ua);
@@ -52,23 +53,19 @@ export default async function CardPage({
         <CardPreview
           platform={isAndroid ? "google" : "apple"}
           businessName={business.name}
-          programName={program.name}
-          reward={program.reward_description}
-          threshold={program.reward_threshold}
-          stamps={card.stamps_count}
-          customerName={customer.first_name}
-          backgroundColor={program.background_color}
-          foregroundColor={program.foreground_color}
-          labelColor={program.label_color}
           logoUrl={business.logo_url}
+          customerName={customer.first_name}
+          design={designFromProgram(program)}
+          state={state}
+          secondary={secondaryField(program, card, catalog)}
+          couponsCount={coupons.length}
+          stripUrl={`/api/strip/${card.serial_number}?v=${new Date(card.updated_at).getTime()}`}
         />
       </div>
 
       <div className="panel text-center space-y-2">
         <p className="font-semibold">Ma carte web (si tu n&apos;utilises pas de Wallet)</p>
-        <p className="text-sm">
-          {statusSentence(card.stamps_count, program.reward_threshold, program.reward_description)}
-        </p>
+        <p className="text-sm">{state.sentence}</p>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={qr} alt="Ton QR code à présenter en caisse" className="mx-auto w-56 h-56" />
         <p className="text-sm text-gray-600">
@@ -76,6 +73,60 @@ export default async function CardPage({
         </p>
         {card.last_message && <p className="text-sm bg-gray-50 rounded-lg p-2">📣 {card.last_message}</p>}
       </div>
+
+      {coupons.length > 0 && (
+        <div className="panel space-y-2">
+          <p className="font-semibold">🎁 Tes offres (à montrer en caisse)</p>
+          <ul className="space-y-1 text-sm">
+            {coupons.map((c) => (
+              <li key={c.id} className="rounded-lg bg-gray-50 p-2">
+                {c.title}
+                {c.expires_at && (
+                  <span className="block text-xs text-gray-500">
+                    Jusqu&apos;au {new Date(c.expires_at).toLocaleDateString("fr-FR", { timeZone: "America/Guadeloupe" })}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {(state.tier || (program.mode === "points" && catalog.length > 0)) && (
+        <div className="panel space-y-3 text-sm">
+          {state.tier && (
+            <div>
+              <p className="font-semibold">
+                Niveau {state.tier.name}
+                {state.tier.perk ? ` : ${state.tier.perk}` : ""}
+              </p>
+              {state.nextTier && (
+                <p className="text-gray-600">
+                  Prochain niveau ({state.nextTier.tier.name}) dans {state.nextTier.remaining}.
+                </p>
+              )}
+            </div>
+          )}
+          {program.mode === "points" && catalog.length > 0 && (
+            <div>
+              <p className="font-semibold">Cadeaux</p>
+              <ul>
+                {catalog
+                  .filter((r) => r.is_active)
+                  .map((r) => (
+                    <li key={r.id} className={r.cost <= card.points_balance ? "font-semibold text-green-700" : ""}>
+                      {r.cost} pts : {r.name}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+          <p className="text-gray-500">{state.rule}</p>
+          {program.mode === "cashback" && Number(card.cashback_balance) > 0 && (
+            <p>Cagnotte disponible : {formatEuro(card.cashback_balance)}</p>
+          )}
+        </div>
+      )}
 
       <p className="text-center text-xs text-gray-500">
         <a href="/confidentialite" className="underline">

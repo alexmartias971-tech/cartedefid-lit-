@@ -5,15 +5,18 @@ import BusinessForm from "@/components/BusinessForm";
 import ConfirmButton from "@/components/ConfirmButton";
 import CopyField from "@/components/CopyField";
 import NotificationForm from "@/components/NotificationForm";
+import OfferForm from "@/components/OfferForm";
+import { computeCardState, MODE_LABELS } from "@/lib/card-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import { appUrl } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
-import type { Business, Customer, NotificationRow, Program } from "@/lib/types";
+import type { Business, Customer, NotificationRow, Program, Tier, CatalogReward } from "@/lib/types";
 import {
   adminCancelNotification,
   adminCreateNotification,
   deleteAccess,
   deleteCustomer,
+  sendOfferToAll,
   setBusinessStatus,
   setProgramActive,
   updateAccess,
@@ -42,8 +45,18 @@ export default async function EntreprisePage({
   const { data: businessData } = await supabase.from("businesses").select("*").eq("id", id).maybeSingle();
   if (!businessData) notFound();
   const business = businessData as Business;
-  const { data: programData } = await supabase.from("loyalty_programs").select("*").eq("business_id", id).maybeSingle();
-  const program = programData as Program | null;
+  const { data: programData } = await supabase
+    .from("loyalty_programs")
+    .select("*, program_tiers(*), reward_catalog(*)")
+    .eq("business_id", id)
+    .maybeSingle();
+  const { program_tiers: tiers = [], reward_catalog: catalog = [], ...programRest } = (programData ?? {}) as Program & {
+    program_tiers?: Tier[];
+    reward_catalog?: CatalogReward[];
+  };
+  const program = programData ? (programRest as Program) : null;
+  const sortedTiers = [...tiers].sort((a, b) => Number(a.min_value) - Number(b.min_value));
+  const sortedCatalog = [...catalog].sort((a, b) => a.cost - b.cost);
 
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -51,7 +64,7 @@ export default async function EntreprisePage({
 
   let customersQuery = supabase
     .from("customers")
-    .select("*, cards(stamps_count, rewards_redeemed, wallet_platform)")
+    .select("*, cards(stamps_count, points_balance, cashback_balance, tier_id, rewards_redeemed, wallet_platform)")
     .eq("business_id", id)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -75,21 +88,28 @@ export default async function EntreprisePage({
         .from("stamp_events")
         .select("id", { count: "exact", head: true })
         .eq("business_id", id)
-        .eq("event_type", "stamp")
+        .in("event_type", ["stamp", "purchase"])
         .is("undone_at", null)
         .gte("created_at", monthStart.toISOString()),
       supabase
         .from("stamp_events")
         .select("id", { count: "exact", head: true })
         .eq("business_id", id)
-        .eq("event_type", "reward_redeemed"),
+        .in("event_type", ["reward_redeemed", "points_redeemed", "coupon_used", "cashback_used"]),
       supabase.from("scanner_access").select("*").eq("business_id", id).order("created_at"),
       supabase.from("notifications").select("*").eq("business_id", id).order("send_at", { ascending: false }).limit(30),
       supabase.from("cards").select("wallet_platform, customers!inner(business_id)").eq("customers.business_id", id),
     ]);
 
   type CustomerRow = Customer & {
-    cards: { stamps_count: number; rewards_redeemed: number; wallet_platform: string | null }[];
+    cards: {
+      stamps_count: number;
+      points_balance: number;
+      cashback_balance: number;
+      tier_id: string | null;
+      rewards_redeemed: number;
+      wallet_platform: string | null;
+    }[];
   };
   const customers = (customersRes.data ?? []) as CustomerRow[];
   const accesses = (accessRes.data ?? []) as {
@@ -109,8 +129,8 @@ export default async function EntreprisePage({
   const stats = [
     { label: "Clients inscrits", value: countRes.count ?? 0 },
     { label: "Acceptent les offres", value: optinRes.count ?? 0 },
-    { label: "Tampons ce mois-ci", value: stampsRes.count ?? 0 },
-    { label: "Cadeaux remis", value: redeemedRes.count ?? 0 },
+    { label: "Passages ce mois-ci", value: stampsRes.count ?? 0 },
+    { label: "Récompenses utilisées", value: redeemedRes.count ?? 0 },
   ];
 
   return (
@@ -295,7 +315,16 @@ export default async function EntreprisePage({
               />
             ))}
         </div>
-        <BusinessForm business={business} program={program ?? undefined} />
+        <BusinessForm business={business} program={program ?? undefined} tiers={sortedTiers} catalog={sortedCatalog} />
+      </section>
+
+      <section className="panel space-y-4" id="offres">
+        <h2 className="text-xl font-bold">Offre ponctuelle pour tous les clients</h2>
+        <p className="text-sm text-gray-600">
+          Ajoute une offre (réduction, cadeau…) sur la carte de tous les clients. Le commerçant la valide en caisse en
+          scannant la carte. Tu peux aussi prévenir par notification les clients qui acceptent les offres.
+        </p>
+        <OfferForm onSubmit={sendOfferToAll.bind(null, id)} />
       </section>
 
       <section className="panel space-y-4" id="clients">
@@ -318,7 +347,7 @@ export default async function EntreprisePage({
                 <tr>
                   <th className="py-2 pr-3">Client</th>
                   <th className="pr-3">Contact</th>
-                  <th className="pr-3">Tampons</th>
+                  <th className="pr-3">{program ? MODE_LABELS[program.mode] : "Solde"}</th>
                   <th className="pr-3">Offres</th>
                   <th className="pr-3">Dernière visite</th>
                   <th></th>
@@ -338,7 +367,14 @@ export default async function EntreprisePage({
                       <div>{c.phone ?? ""}</div>
                     </td>
                     <td className="pr-3 tabular-nums">
-                      {c.cards?.[0]?.stamps_count ?? 0}/{program?.reward_threshold ?? "?"}
+                      {program && c.cards?.[0]
+                        ? computeCardState(program, { lifetime_visits: 0, lifetime_spent: 0, ...c.cards[0] }).balanceValue
+                        : "—"}
+                      {c.cards?.[0]?.tier_id && (
+                        <div className="text-xs text-gray-500">
+                          {sortedTiers.find((t) => t.id === c.cards[0].tier_id)?.name}
+                        </div>
+                      )}
                     </td>
                     <td className="pr-3">{c.marketing_optin ? "Oui" : "Non"}</td>
                     <td className="pr-3 whitespace-nowrap">{formatDateTime(c.last_visit_at)}</td>

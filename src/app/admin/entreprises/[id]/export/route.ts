@@ -13,7 +13,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { data } = await supabase
     .from("customers")
     .select(
-      "first_name, last_name, email, phone, birth_date, marketing_optin, created_at, last_visit_at, cards(stamps_count, rewards_redeemed, wallet_platform)",
+      "first_name, last_name, email, phone, birth_date, marketing_optin, created_at, last_visit_at, cards(stamps_count, points_balance, cashback_balance, lifetime_visits, lifetime_spent, rewards_redeemed, wallet_platform)",
     )
     .eq("business_id", id)
     .order("created_at");
@@ -27,7 +27,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     marketing_optin: boolean;
     created_at: string;
     last_visit_at: string | null;
-    cards: { stamps_count: number; rewards_redeemed: number; wallet_platform: string | null }[];
+    cards: {
+      stamps_count: number;
+      points_balance: number;
+      cashback_balance: number;
+      lifetime_visits: number;
+      lifetime_spent: number;
+      rewards_redeemed: number;
+      wallet_platform: string | null;
+    }[];
   };
   const header = [
     "Prénom",
@@ -39,6 +47,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     "Inscrit le",
     "Dernière visite",
     "Tampons",
+    "Points",
+    "Cagnotte (€)",
+    "Passages",
+    "Total dépensé (€)",
     "Cadeaux remis",
     "Wallet",
   ];
@@ -53,6 +65,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       c.created_at,
       c.last_visit_at,
       c.cards?.[0]?.stamps_count ?? 0,
+      c.cards?.[0]?.points_balance ?? 0,
+      String(c.cards?.[0]?.cashback_balance ?? 0).replace(".", ","),
+      c.cards?.[0]?.lifetime_visits ?? 0,
+      String(c.cards?.[0]?.lifetime_spent ?? 0).replace(".", ","),
       c.cards?.[0]?.rewards_redeemed ?? 0,
       c.cards?.[0]?.wallet_platform ?? "",
     ]

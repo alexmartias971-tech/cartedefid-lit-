@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import PrintButton from "@/components/PrintButton";
+import { programPitch } from "@/lib/card-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import { appUrl } from "@/lib/env";
 import type { Business, Program } from "@/lib/types";
@@ -59,7 +60,7 @@ export default async function KitPage({ params }: { params: Promise<{ id: string
         <p className="text-xl mt-2">Ta carte de fidélité dans ton téléphone</p>
         {program && (
           <p className="text-lg font-semibold mt-4">
-            {program.reward_threshold} passages = {program.reward_description} 🎁
+            {programPitch(program)} 🎁
           </p>
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}

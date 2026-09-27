@@ -8,10 +8,21 @@ type Tab = "scan" | "notif" | "clients";
 type CardInfo = {
   first_name: string;
   last_name: string | null;
-  stamps: number;
-  threshold: number;
+  mode: "stamps" | "points" | "cashback";
+  balance_label: string;
+  balance_value: string;
+  stamps: { filled: number; total: number } | null;
+  sentence: string;
   reward: string;
   reward_ready: boolean;
+  points: number;
+  cashback: number;
+  points_per_euro: number;
+  cashback_percent: number;
+  tier: { name: string; perk: string | null } | null;
+  next_tier: { name: string; remaining: string } | null;
+  coupons: { id: string; title: string; expires_at: string | null }[];
+  catalog: { id: string; name: string; cost: number; affordable: boolean }[];
 };
 type Html5QrcodeInstance = {
   start: (...a: unknown[]) => Promise<unknown>;
@@ -86,13 +97,15 @@ export default function MerchantApp(props: {
       <div className="p-4 flex-1">
         {tab === "scan" && <Scanner />}
         {tab === "notif" && props.canNotify && <Notifications businessName={props.businessName} />}
-        {tab === "clients" && <Clients threshold={props.threshold} />}
+        {tab === "clients" && <Clients />}
       </div>
     </div>
   );
 }
 
 /* ---------------------------------- SCANNER ---------------------------------- */
+const euro = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n || 0);
+
 function Scanner() {
   const scannerRef = useRef<Html5QrcodeInstance | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -101,6 +114,9 @@ function Scanner() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [useAmount, setUseAmount] = useState("");
+  const [confirm, setConfirm] = useState<{ label: string; run: () => void } | null>(null);
 
   const stopCamera = useCallback(async () => {
     const s = scannerRef.current;
@@ -115,20 +131,28 @@ function Scanner() {
     [stopCamera],
   );
 
-  async function lookup(value: string) {
+  async function send(action: string, extra: Record<string, unknown> = {}, value?: string) {
+    const target = value ?? serial;
+    if (!target) return;
     setBusy(true);
-    const res = await api<CardInfo>("/api/merchant/scan", {
+    setConfirm(null);
+    const res = await api<CardInfo & { done?: string }>("/api/merchant/scan", {
       method: "POST",
-      body: JSON.stringify({ serial: value, action: "lookup" }),
+      body: JSON.stringify({ serial: target, action, ...extra }),
     });
     setBusy(false);
     if (!res.ok) {
-      setMessage({ ok: false, text: res.error ?? "Carte non reconnue." });
-      setSerial(null);
+      setMessage({ ok: false, text: res.error ?? "Action impossible." });
+      if (action === "lookup") setSerial(null);
       return;
     }
-    setSerial(value);
+    setSerial(target);
     setCard(res);
+    if (action === "lookup") return;
+    setMessage({ ok: true, text: res.done ?? "C'est enregistré ✓" });
+    setCanUndo(action === "stamp" || action === "purchase");
+    setAmount("");
+    setUseAmount("");
   }
 
   async function startCamera() {
@@ -136,6 +160,7 @@ function Scanner() {
     setCard(null);
     setSerial(null);
     setCanUndo(false);
+    setConfirm(null);
     const { Html5Qrcode } = await import("html5-qrcode");
     const scanner = new Html5Qrcode("lecteur-qr") as unknown as Html5QrcodeInstance;
     scannerRef.current = scanner;
@@ -146,7 +171,7 @@ function Scanner() {
         { fps: 10, qrbox: { width: 240, height: 240 } },
         async (text: string) => {
           await stopCamera();
-          await lookup(text.trim());
+          await send("lookup", {}, text.trim());
         },
         () => {},
       );
@@ -159,32 +184,13 @@ function Scanner() {
     }
   }
 
-  async function act(action: "stamp" | "redeem" | "undo") {
-    if (!serial) return;
-    setBusy(true);
-    const res = await api<{ stamps: number; threshold: number; reward_ready?: boolean }>("/api/merchant/scan", {
-      method: "POST",
-      body: JSON.stringify({ serial, action }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setMessage({ ok: false, text: res.error ?? "Action impossible." });
-      return;
-    }
-    setCard((c) => (c ? { ...c, stamps: res.stamps, reward_ready: res.stamps >= res.threshold } : c));
-    setCanUndo(action === "stamp");
-    setMessage({
-      ok: true,
-      text:
-        action === "stamp"
-          ? res.reward_ready
-            ? "Tampon ajouté ✓ 🎁 Cadeau débloqué !"
-            : "Tampon ajouté ✓"
-          : action === "redeem"
-            ? "Cadeau validé ✓ Le compteur est remis à zéro."
-            : "Tampon annulé.",
-    });
-  }
+  const amountNum = Number(amount.replace(",", ".")) || 0;
+  const preview =
+    card?.mode === "points"
+      ? `+${Math.floor(amountNum * card.points_per_euro)} points`
+      : card?.mode === "cashback"
+        ? `+${euro(Math.round(amountNum * card.cashback_percent) / 100)} sur la cagnotte`
+        : "";
 
   return (
     <div className="space-y-4">
@@ -203,37 +209,133 @@ function Scanner() {
       {busy && <p className="text-center text-gray-600">Un instant…</p>}
 
       {card && (
-        <div className="panel space-y-3 text-center">
-          <p className="text-2xl font-bold">
-            {card.first_name} {card.last_name ?? ""}
-          </p>
-          <p className="text-4xl font-extrabold tabular-nums">
-            {Math.min(card.stamps, card.threshold)}/{card.threshold}
-          </p>
-          <div className="flex flex-wrap justify-center gap-1.5">
-            {Array.from({ length: card.threshold }).map((_, i) => (
-              <span
-                key={i}
-                className={`h-5 w-5 rounded-full border-2 border-[var(--lagon)] ${i < card.stamps ? "bg-[var(--lagon)]" : ""}`}
-              />
-            ))}
+        <div className="panel space-y-4">
+          <div className="text-center">
+            <p className="text-2xl font-bold">
+              {card.first_name} {card.last_name ?? ""}
+            </p>
+            {card.tier && (
+              <p className="text-sm font-semibold text-[var(--lagon)]">
+                Niveau {card.tier.name}
+                {card.tier.perk ? ` : ${card.tier.perk}` : ""}
+              </p>
+            )}
+            <p className="mt-2 text-xs font-semibold tracking-wider text-gray-500">{card.balance_label}</p>
+            <p className="text-4xl font-extrabold tabular-nums">{card.balance_value}</p>
+            {card.stamps && (
+              <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+                {Array.from({ length: card.stamps.total }).map((_, i) => (
+                  <span
+                    key={i}
+                    className={`h-5 w-5 rounded-full border-2 border-[var(--lagon)] ${i < card.stamps!.filled ? "bg-[var(--lagon)]" : ""}`}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-          {card.reward_ready ? (
-            <>
-              <p className="alert-ok font-semibold">🎁 Cadeau débloqué : {card.reward}</p>
-              <button disabled={busy} onClick={() => act("redeem")} className="btn btn-primary w-full text-lg py-4">
-                J&apos;ai remis le cadeau : valider
+
+          {/* Tampons */}
+          {card.mode === "stamps" &&
+            (card.reward_ready ? (
+              <>
+                <p className="alert-ok font-semibold text-center">🎁 Cadeau débloqué : {card.reward}</p>
+                <button disabled={busy} onClick={() => send("redeem")} className="btn btn-primary w-full text-lg py-4">
+                  J&apos;ai remis le cadeau : valider
+                </button>
+              </>
+            ) : (
+              <button disabled={busy} onClick={() => send("stamp")} className="btn btn-primary w-full text-lg py-4">
+                + Ajouter 1 tampon
               </button>
-            </>
-          ) : (
-            <button disabled={busy} onClick={() => act("stamp")} className="btn btn-primary w-full text-lg py-4">
-              + Ajouter 1 tampon
+            ))}
+
+          {/* Points et cashback : saisir l'achat */}
+          {card.mode !== "stamps" && (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (amountNum <= 0) return;
+                setConfirm({ label: `Enregistrer un achat de ${euro(amountNum)} (${preview}) ?`, run: () => send("purchase", { amount: amountNum }) });
+              }}
+            >
+              <label htmlFor="achat" className="label">Montant de l&apos;achat (€)</label>
+              <div className="flex gap-2">
+                <input id="achat" inputMode="decimal" className="input text-xl" value={amount} placeholder="12,50"
+                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.,]/g, ""))} />
+                <button type="submit" disabled={busy || amountNum <= 0} className="btn btn-primary shrink-0">Valider</button>
+              </div>
+              {amountNum > 0 && <p className="hint">{preview}</p>}
+            </form>
+          )}
+
+          {/* Catalogue de cadeaux (points) */}
+          {card.mode === "points" && card.catalog.length > 0 && (
+            <div className="space-y-2">
+              <p className="font-semibold">Échanger des points</p>
+              {card.catalog.map((r) => (
+                <button key={r.id} disabled={busy || !r.affordable}
+                  onClick={() => setConfirm({ label: `Échanger ${r.cost} points contre « ${r.name} » ?`, run: () => send("reward", { reward_id: r.id }) })}
+                  className={`btn w-full justify-between ${r.affordable ? "btn-secondary" : "btn-secondary opacity-50"}`}>
+                  <span>{r.name}</span>
+                  <span className="tabular-nums">{r.cost} pts</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Cagnotte (cashback) */}
+          {card.mode === "cashback" && card.cashback > 0 && (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const n = Number(useAmount.replace(",", ".")) || 0;
+                if (n <= 0) return;
+                setConfirm({ label: `Déduire ${euro(n)} de la cagnotte (${euro(card.cashback)} disponibles) ?`, run: () => send("cashback", { amount: n }) });
+              }}
+            >
+              <label htmlFor="cagnotte" className="label">Utiliser la cagnotte (max {euro(card.cashback)})</label>
+              <div className="flex gap-2">
+                <input id="cagnotte" inputMode="decimal" className="input" value={useAmount} placeholder={String(card.cashback).replace(".", ",")}
+                  onChange={(e) => setUseAmount(e.target.value.replace(/[^\d.,]/g, ""))} />
+                <button type="submit" disabled={busy} className="btn btn-secondary shrink-0">Déduire</button>
+              </div>
+            </form>
+          )}
+
+          {/* Offres */}
+          {card.coupons.length > 0 && (
+            <div className="space-y-2">
+              <p className="font-semibold">🎁 Offres disponibles</p>
+              {card.coupons.map((c) => (
+                <button key={c.id} disabled={busy}
+                  onClick={() => setConfirm({ label: `Valider l'offre « ${c.title} » ?`, run: () => send("coupon", { coupon_id: c.id }) })}
+                  className="btn btn-secondary w-full justify-between text-left">
+                  <span>{c.title}</span>
+                  <span className="text-sm text-[var(--lagon)]">Utiliser</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {confirm && (
+            <div className="rounded-xl border-2 border-[var(--lagon)] p-3 space-y-2">
+              <p className="font-semibold">{confirm.label}</p>
+              <div className="flex gap-2">
+                <button disabled={busy} onClick={confirm.run} className="btn btn-primary flex-1">Oui, valider</button>
+                <button onClick={() => setConfirm(null)} className="btn btn-secondary flex-1">Annuler</button>
+              </div>
+            </div>
+          )}
+
+          {canUndo && (
+            <button disabled={busy} onClick={() => send("undo")} className="btn btn-danger w-full">
+              Annuler le dernier passage
             </button>
           )}
-          {canUndo && (
-            <button disabled={busy} onClick={() => act("undo")} className="btn btn-danger w-full">
-              Annuler ce tampon
-            </button>
+          {card.next_tier && (
+            <p className="hint text-center">Niveau {card.next_tier.name} dans {card.next_tier.remaining}.</p>
           )}
         </div>
       )}
@@ -343,10 +445,11 @@ type ClientRow = {
   email: string | null;
   last_visit_at: string | null;
   marketing_optin: boolean;
-  cards: { stamps_count: number; rewards_redeemed: number }[];
+  balance: string;
+  tier: string | null;
 };
 
-function Clients({ threshold }: { threshold: number }) {
+function Clients() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ClientRow[]>([]);
   const [stats, setStats] = useState<{ total: number; stampsThisMonth: number; rewardsRedeemed: number } | null>(null);
@@ -376,8 +479,8 @@ function Clients({ threshold }: { threshold: number }) {
         <div className="grid grid-cols-3 gap-2 text-center">
           {[
             ["Clients", stats.total],
-            ["Tampons ce mois", stats.stampsThisMonth],
-            ["Cadeaux remis", stats.rewardsRedeemed],
+            ["Passages ce mois", stats.stampsThisMonth],
+            ["Récompenses utilisées", stats.rewardsRedeemed],
           ].map(([l, v]) => (
             <div key={String(l)} className="panel p-3">
               <div className="text-2xl font-bold tabular-nums">{v}</div>
@@ -407,7 +510,8 @@ function Clients({ threshold }: { threshold: number }) {
             </span>
             <span className="text-right">
               <span className="font-semibold tabular-nums">
-                {c.cards?.[0]?.stamps_count ?? 0}/{threshold}
+                {c.balance}
+                {c.tier ? ` · ${c.tier}` : ""}
               </span>
               <span className="block text-gray-500">{fmt(c.last_visit_at)}</span>
             </span>
