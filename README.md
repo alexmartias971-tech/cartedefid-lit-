@@ -26,4 +26,5 @@ npm run build    # vérifier que tout compile
 - `src/lib/apple` : cartes Apple Wallet (fabrication + notifications)
 - `src/lib/google` : cartes Google Wallet
 - `src/lib/notifications.ts` : envoi et programmation des notifications
-- `vercel.json` : tâche planifiée toutes les 5 minutes (notifications programmées)
+- `vercel.json` : réglages Vercel (région Paris, tâche de secours 1 fois par jour)
+- `supabase/03-envoi-automatique.sql` : envoi des notifications programmées toutes les 5 minutes (gratuit, via Supabase)

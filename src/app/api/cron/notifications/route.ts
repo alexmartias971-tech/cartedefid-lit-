@@ -4,7 +4,7 @@ import { runDueNotifications, runWinback } from "@/lib/notifications";
 export const maxDuration = 300;
 
 /**
- * Tâche planifiée (toutes les 5 minutes, voir vercel.json) :
+ * Tâche planifiée (toutes les 5 minutes via supabase/03-envoi-automatique.sql, + 1 fois par jour via vercel.json) :
  * envoie les notifications programmées et les messages "Tu nous manques".
  * Protégée par CRON_SECRET : Vercel l'envoie automatiquement dans l'en-tête Authorization.
  */
