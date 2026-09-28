@@ -64,3 +64,17 @@ export async function wideLogoPng(business: Business, program: Program | null, s
   }
   return letterIcon(business, program, 50 * scale);
 }
+
+/** Logo de la carte « poster » iOS 27 : 30 points de haut, 30 à 126 de large. Rien si pas de logo. */
+export async function primaryLogoPng(business: Business, scale: 1 | 2 | 3): Promise<Buffer | null> {
+  const source = await fetchLogo(business.logo_url);
+  if (!source) return null;
+  try {
+    return await sharp(source)
+      .resize(126 * scale, 30 * scale, { fit: "inside", withoutEnlargement: false })
+      .png()
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}

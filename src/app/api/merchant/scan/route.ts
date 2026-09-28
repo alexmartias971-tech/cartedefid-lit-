@@ -108,6 +108,8 @@ export async function POST(request: Request) {
     reward_ready?: boolean;
     points_added?: number;
     cashback_added?: number;
+    bonus?: boolean;
+    referrer_card_id?: string | null;
   };
   if (!result.ok) return NextResponse.json(result, { status: 409 });
 
@@ -128,6 +130,8 @@ export async function POST(request: Request) {
   if (body.action === "reward") done = "Cadeau validé ✓ Points déduits.";
   if (body.action === "coupon") done = "Offre validée ✓";
   if (body.action === "undo") done = "Dernier passage annulé.";
+  if (result.bonus && (body.action === "stamp" || body.action === "purchase")) done += ` ⚡ Heures boostées × ${before.program.bonus_multiplier}`;
+  if (result.referrer_card_id) done += " 🤝 Le parrain a reçu son bonus.";
 
   // Mise à jour de la carte dans le téléphone du client, juste après la réponse
   const tierUp =
@@ -141,6 +145,12 @@ export async function POST(request: Request) {
       await syncCard(cardId, { header: businessName, body: "🎁 Ton cadeau est débloqué ! Montre ta carte en caisse." });
     } else {
       await syncCard(cardId);
+    }
+    if (result.referrer_card_id) {
+      await syncCard(result.referrer_card_id, {
+        header: businessName,
+        body: "🤝 Merci ! Un ami est venu grâce à toi : ton bonus parrainage est sur ta carte.",
+      });
     }
   });
 

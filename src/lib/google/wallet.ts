@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState } from "@/lib/card-state";
+import { computeCardState, designFromProgram, fieldLabels } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -85,6 +85,7 @@ export async function upsertGoogleClass(program: Program, business: Business) {
 
 function objectBody({ card, customer, program, business, tiers, catalog, coupons }: CardBundle) {
   const state = computeCardState(program, card, tiers, catalog);
+  const labels = fieldLabels(designFromProgram(program), state);
   const textModulesData = [{ id: "status", header: "Ta carte", body: state.sentence }];
   if (coupons.length > 0) {
     textModulesData.push({ id: "coupons", header: "Tes offres", body: coupons.map((c) => `• ${c.title}`).join("\n") });
@@ -107,6 +108,18 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
   textModulesData.push({ id: "rule", header: "Règle", body: state.rule });
   if (card.last_message) textModulesData.push({ id: "message", header: `Message de ${business.name}`, body: card.last_message });
   if (program.back_text) textModulesData.push({ id: "info", header: "Informations", body: program.back_text });
+  const shareUrl = `${appUrl()}/c/${business.slug}?p=${card.referral_code}`;
+  if (program.referral_bonus > 0) {
+    textModulesData.push({
+      id: "referral",
+      header: "Parraine un ami",
+      body: `Envoie ce lien : ${shareUrl} — à sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "points" : "tampon(s)"}.`,
+    });
+  }
+  const uris = [{ uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" }];
+  if (program.referral_bonus > 0) uris.unshift({ uri: shareUrl, description: "Parrainer un ami", id: "referral" });
+  if (business.instagram_url) uris.unshift({ uri: business.instagram_url, description: "Instagram", id: "instagram" });
+  if (business.google_review_url) uris.unshift({ uri: business.google_review_url, description: "Laisser un avis Google", id: "review" });
 
   // L'image est versionnée : Google ne la recharge que si l'adresse change
   const version = new Date(card.updated_at).getTime();
@@ -116,7 +129,7 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     state: "ACTIVE",
     accountId: card.serial_number,
     accountName: customer.first_name,
-    loyaltyPoints: { label: state.balanceLabel.toLowerCase(), balance: { string: state.balanceValue } },
+    loyaltyPoints: { label: labels.balance, balance: { string: state.balanceValue } },
     ...(state.tier ? { secondaryLoyaltyPoints: { label: "niveau", balance: { string: state.tier.name } } } : {}),
     barcode: { type: "QR_CODE", value: card.serial_number, alternateText: customer.first_name },
     hexBackgroundColor: state.tier?.color || program.background_color,
@@ -125,9 +138,10 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
       contentDescription: { defaultValue: { language: "fr-FR", value: program.name } },
     },
     textModulesData,
-    linksModuleData: {
-      uris: [{ uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" }],
-    },
+    linksModuleData: { uris },
+    ...(business.latitude != null && business.longitude != null
+      ? { locations: [{ latitude: Number(business.latitude), longitude: Number(business.longitude) }] }
+      : {}),
   };
 }
 

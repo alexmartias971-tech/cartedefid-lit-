@@ -1,194 +1,191 @@
+"use client";
 /* eslint-disable @next/next/no-img-element */
-import type { CardState } from "@/lib/card-state";
+import { useMemo } from "react";
+import QRCode from "qrcode";
+import { cardBannerSvg, cardPosterSvg, fieldLabels, type CardDesign, type CardState } from "@/lib/card-state";
 
 /**
- * Aperçu de la carte telle qu'elle apparaît dans le Wallet.
- * La disposition suit celle d'Apple Wallet (en-tête, bannière, champs) :
- * c'est une approximation visuelle, le rendu exact dépend du téléphone.
+ * Aperçu fidèle de la carte dans le Wallet, aux formats officiels :
+ *  - "poster" : iPhone iOS 27 (photo sur toute la carte, 358 × 448)
+ *  - "apple"  : iPhone iOS 26 et avant (bannière 375 × 144)
+ *  - "google" : Android, Google Wallet (image héros 1032 × 336, en bas)
+ * Les images sont dessinées avec exactement le même code que celles envoyées au téléphone,
+ * et le QR code est un vrai QR code (scannable).
  */
-export type PreviewDesign = {
-  mode: "stamps" | "points" | "cashback";
-  programName: string;
-  backgroundColor: string;
-  foregroundColor: string;
-  labelColor: string;
-  stampColor: string;
-  stripOverlay: number;
-  stripImageUrl?: string | null;
-  stampIconUrl?: string | null;
-  stampEmptyIconUrl?: string | null;
-};
-
 export type PreviewProps = {
-  platform: "apple" | "google";
+  platform: "poster" | "apple" | "google";
   businessName: string;
   logoUrl?: string | null;
   customerName: string;
-  design: PreviewDesign;
+  design: CardDesign;
   state: CardState;
+  /** Photo à afficher (celle du niveau du client, sinon la photo principale). */
+  photoUrl?: string | null;
+  /** Progression dessinée (cases remplies / total). */
+  progress: { total: number; filled: number };
   /** Deuxième champ sous la bannière (ex : CADEAU / prochain cadeau / taux de cashback). */
   secondary?: { label: string; value: string } | null;
   couponsCount?: number;
-  /** Image de bannière déjà fabriquée par le serveur (carte web). Sinon, dessin en direct. */
-  stripUrl?: string | null;
+  /** Contenu du QR code (numéro de la carte). */
+  qrValue?: string;
 };
 
-function Stamp({ filled, design, size }: { filled: boolean; design: PreviewDesign; size: number }) {
-  const src = filled ? design.stampIconUrl : (design.stampEmptyIconUrl ?? design.stampIconUrl);
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt=""
-        style={{ width: size, height: size, objectFit: "contain", opacity: filled || design.stampEmptyIconUrl ? 1 : 0.3 }}
-      />
-    );
-  }
+function QrSvg({ value, size }: { value: string; size: number }) {
+  const path = useMemo(() => {
+    const qr = QRCode.create(value, { errorCorrectionLevel: "M" });
+    const n = qr.modules.size;
+    let d = "";
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (qr.modules.get(x, y)) d += `M${x} ${y}h1v1h-1z`;
+      }
+    }
+    return { d, n };
+  }, [value]);
   return (
-    <span
-      style={{
-        width: size * 0.88,
-        height: size * 0.88,
-        borderRadius: "50%",
-        display: "grid",
-        placeItems: "center",
-        background: filled ? design.stampColor : "rgba(255,255,255,0.08)",
-        border: filled ? "none" : `${Math.max(2, size * 0.06)}px dashed ${design.stampColor}`,
-        opacity: filled ? 1 : 0.75,
-        color: design.backgroundColor,
-        fontWeight: 800,
-        fontSize: size * 0.45,
-        lineHeight: 1,
-      }}
-    >
-      {filled ? "✓" : ""}
+    <svg width={size} height={size} viewBox={`0 0 ${path.n} ${path.n}`} shapeRendering="crispEdges" role="img" aria-label="QR code de la carte">
+      <rect width={path.n} height={path.n} fill="#ffffff" />
+      <path d={path.d} fill="#000000" />
+    </svg>
+  );
+}
+
+function Logo({ url, name, bg, fg, size = 32, round }: { url?: string | null; name: string; bg: string; fg: string; size?: number; round?: boolean }) {
+  const initial = (name.trim()[0] ?? "?").toUpperCase();
+  const style = { width: size, height: size };
+  if (url) return <img src={url} alt="" style={style} className={`object-contain ${round ? "rounded-full bg-white" : "rounded-md"}`} />;
+  return (
+    <span style={{ ...style, background: fg, color: bg }} className={`grid place-items-center font-bold ${round ? "rounded-full" : "rounded-md"}`}>
+      {initial}
     </span>
   );
 }
 
+function Field({ label, value, color, align, big }: { label: string; value: string; color: string; align?: "right"; big?: boolean }) {
+  return (
+    <div className={`min-w-0 ${align === "right" ? "text-right" : ""}`}>
+      <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color }}>
+        {label}
+      </div>
+      <div className={`${big ? "text-[15px]" : "text-[14px]"} leading-tight truncate`}>{value}</div>
+    </div>
+  );
+}
+
+const Svg = ({ html, ratio }: { html: string; ratio: string }) => (
+  <div className="w-full [&>svg]:w-full [&>svg]:h-full" style={{ aspectRatio: ratio }} dangerouslySetInnerHTML={{ __html: html }} />
+);
+
 export default function CardPreview(p: PreviewProps) {
   const d = p.design;
   const bg = p.state.tier?.color || d.backgroundColor;
-  const initial = (p.businessName.trim()[0] ?? "?").toUpperCase();
-  const total = p.state.stamps?.total ?? 0;
-  const filled = p.state.stamps?.filled ?? 0;
-  const rows = total <= 6 ? 1 : total <= 14 ? 2 : 3;
-  const cols = Math.max(1, Math.ceil(total / rows));
-  const stampSize = Math.min(300 / cols, 88 / rows) * 0.9;
+  const design = useMemo(() => ({ ...d, backgroundColor: bg }), [d, bg]);
+  const labels = fieldLabels(d, p.state);
+  const photo = p.photoUrl !== undefined ? p.photoUrl : d.stripImageUrl;
+  const qrValue = p.qrValue || "APERCU-CARTE-FIDELITE";
+  const name = p.businessName || "Nom du commerce";
+  const { total, filled } = p.progress;
+  const uid = `pv-${p.platform}`;
+
+  const art = useMemo(() => {
+    const progress = { total, filled };
+    if (p.platform === "poster") return cardPosterSvg(design, 358, 448, uid, photo, progress);
+    if (p.platform === "google") return cardBannerSvg(design, progress, "google", 1032, 336, uid, { decor: photo });
+    return cardBannerSvg(design, progress, "apple", 375, 144, uid, { decor: photo });
+  }, [p.platform, design, total, filled, uid, photo]);
+
+  const fields: { label: string; value: string }[] = [{ label: labels.customer, value: p.customerName }];
+  if (p.secondary) fields.push(d.mode === "stamps" && labels.reward ? { ...p.secondary, label: labels.reward } : p.secondary);
+  if (p.state.tier) fields.push({ label: "NIVEAU", value: p.state.tier.name });
+  if (p.couponsCount) fields.push({ label: "OFFRES", value: `${p.couponsCount} disponible${p.couponsCount > 1 ? "s" : ""}` });
+
+  if (p.platform === "poster") {
+    const [balanceValue, balanceTotal] = p.state.balanceValue.split("/");
+    return (
+      <div className="w-full max-w-[340px]">
+        <div className="text-xs font-semibold text-gray-500 mb-1">iPhone · iOS 27 (carte « poster »)</div>
+        <div className="overflow-hidden rounded-[22px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
+          <div className="relative">
+            <Svg html={art} ratio="358 / 448" />
+            <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3.5">
+              {p.logoUrl ? <img src={p.logoUrl} alt="" className="h-[30px] max-w-[126px] object-contain object-left" /> : <span className="text-[17px] font-semibold truncate">{name}</span>}
+              {p.state.tier ? (
+                <Field label="NIVEAU" value={p.state.tier.name} color={d.labelColor} align="right" />
+              ) : (
+                <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
+              )}
+            </div>
+            <div className="absolute inset-x-0 bottom-0 px-4 pb-4 space-y-2">
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>{labels.balance}</div>
+                  <div className="text-[40px] font-semibold leading-none tracking-tight tabular-nums">
+                    {balanceValue}
+                    {balanceTotal && <span className="text-xl font-medium opacity-75">/{balanceTotal}</span>}
+                  </div>
+                </div>
+                <Field label={labels.customer} value={p.customerName} color={d.labelColor} align="right" big />
+              </div>
+              <div className="text-[13px] font-medium leading-snug" style={{ color: d.stampColor }}>{p.state.sentence}</div>
+            </div>
+          </div>
+          <div className="flex flex-col items-center pb-4 pt-1">
+            <div className="rounded-xl bg-white p-2 leading-none"><QrSvg value={qrValue} size={116} /></div>
+            <div className="mt-1.5 text-[11px] opacity-75">{p.customerName}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (p.platform === "google") {
+    return (
+      <div className="w-full max-w-[340px]">
+        <div className="text-xs font-semibold text-gray-500 mb-1">Android · Google Wallet</div>
+        <div className="overflow-hidden rounded-[26px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
+          <div className="flex items-center gap-2.5 px-4 pt-4">
+            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} round />
+            <span className="text-sm font-medium truncate">{name}</span>
+          </div>
+          <div className="px-4 pt-3 text-[22px] leading-snug">{d.programName || "Carte de fidélité"}</div>
+          <div className="grid grid-cols-2 gap-3 px-4 pt-3">
+            <Field label={labels.balance} value={p.state.balanceValue} color={d.foregroundColor} big />
+            {p.state.tier ? (
+              <Field label="NIVEAU" value={p.state.tier.name} color={d.foregroundColor} align="right" big />
+            ) : (
+              <Field label={labels.customer} value={p.customerName} color={d.foregroundColor} align="right" big />
+            )}
+          </div>
+          <div className="flex flex-col items-center py-4">
+            <div className="rounded-2xl bg-white p-2.5 leading-none"><QrSvg value={qrValue} size={116} /></div>
+            <div className="mt-1.5 text-xs opacity-80">{p.customerName}</div>
+          </div>
+          <Svg html={art} ratio="1032 / 336" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-[340px]">
-      <div className="text-xs font-semibold text-gray-500 mb-1">
-        {p.platform === "apple" ? "Aperçu iPhone (Apple Wallet)" : "Aperçu Android (Google Wallet)"}
-      </div>
-      <div
-        className={`overflow-hidden shadow-lg ${p.platform === "apple" ? "rounded-2xl" : "rounded-3xl"}`}
-        style={{ background: bg, color: d.foregroundColor }}
-      >
-        {/* En-tête : logo + nom + solde */}
-        <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+      <div className="text-xs font-semibold text-gray-500 mb-1">iPhone · iOS 26 et avant</div>
+      <div className="overflow-hidden rounded-[14px] shadow-xl flex flex-col" style={{ background: bg, color: d.foregroundColor }}>
+        <div className="flex items-center justify-between gap-2 px-3 h-[52px] shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {p.logoUrl ? (
-              <img src={p.logoUrl} alt="" className="h-8 w-8 rounded-md object-contain" />
-            ) : (
-              <span
-                className="h-8 w-8 rounded-md grid place-items-center font-bold"
-                style={{ background: d.foregroundColor, color: bg }}
-              >
-                {initial}
-              </span>
-            )}
-            <span className="font-semibold truncate">{p.businessName || "Nom du commerce"}</span>
+            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} />
+            {d.showLogoText && <span className="font-semibold text-[15px] truncate">{name}</span>}
           </div>
-          <div className="text-right shrink-0">
-            <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>
-              {p.state.balanceLabel}
-            </div>
-            <div className="font-semibold tabular-nums">{p.state.balanceValue}</div>
-          </div>
+          <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
         </div>
-
-        {/* Bannière : décor + tampons ou solde */}
-        <div className="relative w-full" style={{ aspectRatio: "375 / 123" }}>
-          {p.stripUrl ? (
-            <img src={p.stripUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-          ) : (
-            <>
-              {d.stripImageUrl && (
-                <img src={d.stripImageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-              )}
-              {d.stripImageUrl && d.stripOverlay > 0 && (
-                <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${d.stripOverlay / 100})` }} />
-              )}
-              {d.mode === "stamps" && (
-                <div
-                  className="absolute inset-0 grid place-content-center gap-y-1 px-3"
-                  style={{ gridTemplateColumns: `repeat(${cols}, ${stampSize / 0.9}px)` }}
-                >
-                  {Array.from({ length: total }).map((_, i) => (
-                    <span key={i} className="grid place-items-center">
-                      <Stamp filled={i < filled} design={d} size={stampSize} />
-                    </span>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {d.mode !== "stamps" && (
-            <div className="absolute inset-0 flex flex-col justify-end px-4 pb-2">
-              <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>
-                {p.state.balanceLabel}
-              </div>
-              <div className="text-3xl font-semibold tabular-nums leading-tight">{p.state.balanceValue}</div>
-            </div>
-          )}
+        <Svg html={art} ratio="375 / 144" />
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 pt-3">
+          {fields.slice(0, 4).map((f, i) => (
+            <Field key={f.label + i} label={f.label} value={f.value} color={d.labelColor} align={i % 2 === 1 ? "right" : undefined} />
+          ))}
         </div>
-
-        {/* Champs sous la bannière */}
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 py-3 text-sm">
-          <div>
-            <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>
-              CLIENT
-            </div>
-            <div className="truncate">{p.customerName}</div>
-          </div>
-          {p.secondary && (
-            <div>
-              <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color: d.labelColor }}>
-                {p.secondary.label}
-              </div>
-              <div className="truncate">{p.secondary.value}</div>
-            </div>
-          )}
-          {p.state.tier && (
-            <div>
-              <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>
-                NIVEAU
-              </div>
-              <div className="truncate">{p.state.tier.name}</div>
-            </div>
-          )}
-          {!!p.couponsCount && (
-            <div>
-              <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>
-                OFFRES
-              </div>
-              <div>
-                {p.couponsCount} disponible{p.couponsCount > 1 ? "s" : ""}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* QR code (simulé) */}
-        <div className="pb-4">
-          <div className="mx-auto w-24 h-24 bg-white rounded-lg grid place-items-center">
-            <div className="w-16 h-16 grid grid-cols-4 gap-0.5" aria-hidden>
-              {Array.from({ length: 16 }).map((_, i) => (
-                <span key={i} className={[0, 1, 4, 3, 6, 9, 10, 12, 15, 13].includes(i) ? "bg-gray-900" : "bg-white"} />
-              ))}
-            </div>
-          </div>
+        <div className="flex flex-col items-center pb-4 pt-6">
+          <div className="rounded-lg bg-white p-2 leading-none"><QrSvg value={qrValue} size={108} /></div>
+          <div className="mt-1 text-[11px] opacity-80">{p.customerName}</div>
         </div>
       </div>
     </div>

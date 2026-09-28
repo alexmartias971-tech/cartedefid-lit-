@@ -6,14 +6,17 @@ import type { SignupState } from "./actions";
 export default function SignupForm({
   action,
   businessName,
+  referral,
 }: {
   action: (prev: SignupState, fd: FormData) => Promise<SignupState>;
   businessName: string;
+  referral?: string | null;
 }) {
   const [state, formAction, pending] = useActionState<SignupState, FormData>(action, {});
 
   return (
     <form action={formAction} className="space-y-4">
+      {referral && <input type="hidden" name="ref" value={referral} />}
       {/* Champ piège anti-robots, invisible pour les humains */}
       <div aria-hidden className="absolute -left-[9999px]">
         <label htmlFor="site_web">Ne pas remplir</label>

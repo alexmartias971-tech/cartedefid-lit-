@@ -1,10 +1,10 @@
 import "server-only";
 import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState } from "@/lib/card-state";
+import { computeCardState, designFromProgram, fieldLabels } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
-import { squareLogoPng, wideLogoPng } from "@/lib/logo";
-import { renderStrip } from "@/lib/strip";
+import { primaryLogoPng, squareLogoPng, wideLogoPng } from "@/lib/logo";
+import { renderCardPoster, renderCardStrip } from "@/lib/strip";
 import type { CardBundle } from "@/lib/types";
 
 /**
@@ -12,27 +12,28 @@ import type { CardBundle } from "@/lib/types";
  * Chaque fois qu'une carte change (tampon, notification), Apple rappelle
  * notre serveur et on refabrique ce fichier avec les nouvelles valeurs.
  */
-export async function buildApplePass({
-  card,
-  customer,
-  program,
-  business,
-  tiers,
-  catalog,
-  coupons,
-}: CardBundle): Promise<Buffer> {
+export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
+  const { card, customer, program, business, tiers, catalog, coupons } = bundle;
   const state = computeCardState(program, card, tiers, catalog);
-  const filled = state.stamps?.filled ?? 0;
-  const [strip1, strip2, strip3, icon1, icon2, icon3, logo1, logo2, logo3] = await Promise.all([
-    renderStrip(program, filled, 1),
-    renderStrip(program, filled, 2),
-    renderStrip(program, filled, 3),
+  const design = designFromProgram(program);
+  const labels = fieldLabels(design, state);
+  const [strip1, strip2, strip3, icon1, icon2, icon3, logo1, logo2, logo3, art1, art2, art3, plogo1, plogo2, plogo3] = await Promise.all([
+    renderCardStrip(bundle, 1),
+    renderCardStrip(bundle, 2),
+    renderCardStrip(bundle, 3),
     squareLogoPng(business, program, 29),
     squareLogoPng(business, program, 58),
     squareLogoPng(business, program, 87),
     wideLogoPng(business, program, 1),
     wideLogoPng(business, program, 2),
     wideLogoPng(business, program, 3),
+    // iOS 27 : carte « poster » avec la photo sur toute la carte (358 × 448 points)
+    renderCardPoster(bundle, 1),
+    renderCardPoster(bundle, 2),
+    renderCardPoster(bundle, 3),
+    primaryLogoPng(business, 1),
+    primaryLogoPng(business, 2),
+    primaryLogoPng(business, 3),
   ]);
 
   const url = appUrl();
@@ -40,6 +41,21 @@ export async function buildApplePass({
   const webService = url.startsWith("https://")
     ? { webServiceURL: `${url}/api/passkit`, authenticationToken: card.auth_token }
     : {};
+
+  // La carte apparaît sur l'écran verrouillé quand le client passe près du commerce
+  const locations =
+    business.latitude != null && business.longitude != null
+      ? {
+          locations: [
+            {
+              latitude: Number(business.latitude),
+              longitude: Number(business.longitude),
+              relevantText: business.relevant_text || `Tu es près de ${business.name} ! Montre ta carte.`,
+            },
+          ],
+          maxDistance: 150,
+        }
+      : {};
 
   const pass = new PKPass(
     {
@@ -52,6 +68,12 @@ export async function buildApplePass({
       "strip.png": strip1,
       "strip@2x.png": strip2,
       "strip@3x.png": strip3,
+      "artwork.png": art1,
+      "artwork@2x.png": art2,
+      "artwork@3x.png": art3,
+      ...(plogo1 && plogo2 && plogo3
+        ? { "primaryLogo.png": plogo1, "primaryLogo@2x.png": plogo2, "primaryLogo@3x.png": plogo3 }
+        : {}),
     },
     {
       wwdr: requireBase64Env("APPLE_WWDR_BASE64"),
@@ -66,11 +88,12 @@ export async function buildApplePass({
       serialNumber: card.serial_number,
       organizationName: business.name,
       description: `Carte de fidélité ${business.name}`,
-      logoText: business.name,
+      ...(design.showLogoText ? { logoText: business.name } : {}),
       backgroundColor: hexToRgb(state.tier?.color || program.background_color),
       foregroundColor: hexToRgb(program.foreground_color),
       labelColor: hexToRgb(program.label_color),
       sharingProhibited: true,
+      ...locations,
       ...webService,
     },
   );
@@ -80,17 +103,17 @@ export async function buildApplePass({
   // Recto de la carte (la disposition est imposée par Apple : en-tête, bannière, 2 lignes de champs)
   store.headerFields.push({
     key: "balance",
-    label: state.balanceLabel,
+    label: labels.balance,
     value: state.balanceValue,
     textAlignment: "PKTextAlignmentRight",
   });
-  if (program.mode !== "stamps") {
-    // Le solde s'affiche en grand sur la bannière
-    store.primaryFields.push({ key: "big", label: state.balanceLabel, value: state.balanceValue });
-  }
-  store.secondaryFields.push({ key: "customer", label: "CLIENT", value: customer.first_name });
+  // Le solde s'affiche en grand sur la bannière quand il n'y a pas de cases dessinées
+  const drawsCells =
+    program.mode !== "cashback" && !["none", "fill"].includes(design.progressStyle) && (program.mode === "stamps" || design.progressStyle !== "grid");
+  if (!drawsCells) store.primaryFields.push({ key: "big", label: labels.balance, value: state.balanceValue });
+  store.secondaryFields.push({ key: "customer", label: labels.customer, value: customer.first_name });
   if (program.mode === "stamps") {
-    store.secondaryFields.push({ key: "reward", label: "CADEAU", value: program.reward_description });
+    store.secondaryFields.push({ key: "reward", label: labels.reward ?? "CADEAU", value: program.reward_description });
   } else if (program.mode === "points") {
     const next = catalog.find((r) => r.is_active && r.cost > card.points_balance);
     if (next) store.secondaryFields.push({ key: "next", label: `À ${next.cost} PTS`, value: next.name });
@@ -136,6 +159,31 @@ export async function buildApplePass({
       value: catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n"),
     });
   }
+  const shareUrl = `${url}/c/${business.slug}?p=${card.referral_code}`;
+  if (program.referral_bonus > 0) {
+    store.backFields.push({
+      key: "referral",
+      label: "Parraine un ami",
+      value: `Envoie ce lien à un ami : ${shareUrl}\nÀ sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "points" : "tampon(s)"} en plus.`,
+      dataDetectorTypes: ["PKDataDetectorTypeLink"],
+    });
+  }
+  if (business.google_review_url) {
+    store.backFields.push({
+      key: "review",
+      label: "Ton avis compte",
+      value: `Tu as aimé ? Laisse-nous un avis Google : ${business.google_review_url}`,
+      dataDetectorTypes: ["PKDataDetectorTypeLink"],
+    });
+  }
+  if (business.instagram_url) {
+    store.backFields.push({
+      key: "instagram",
+      label: "Instagram",
+      value: business.instagram_url,
+      dataDetectorTypes: ["PKDataDetectorTypeLink"],
+    });
+  }
   store.backFields.push({
     key: "rules",
     label: "Règles du programme",
@@ -158,7 +206,22 @@ export async function buildApplePass({
     dataDetectorTypes: ["PKDataDetectorTypeLink"],
   });
 
-  pass.types.push(store);
+  // iOS 27 et plus : carte « poster » (photo plein format). Les iPhone plus anciens gardent la carte classique.
+  const poster = new PassType("posterGeneric");
+  poster.headerFields.push(
+    state.tier
+      ? { key: "ptier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" }
+      : { key: "pbalance-h", label: labels.balance, value: state.balanceValue },
+  );
+  poster.primaryFields.push(
+    { key: "pbalance", label: labels.balance, value: state.balanceValue },
+    { key: "pcustomer", label: labels.customer, value: customer.first_name },
+  );
+  poster.footerFields.push({ key: "pstatus", value: state.sentence, changeMessage: "%@" });
+  poster.backFields.push(...store.backFields.map((f) => ({ ...f, key: `p-${f.key}` })));
+
+  pass.types.push(poster, store);
+  pass.featuredActions = [{ identifier: "ma-carte", type: "viewOffersRewards", url: `${url}/carte/${card.web_token}` }];
   pass.setBarcodes({
     format: "PKBarcodeFormatQR",
     message: card.serial_number,

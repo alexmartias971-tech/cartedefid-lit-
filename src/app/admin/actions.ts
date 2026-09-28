@@ -21,7 +21,8 @@ const int = (fd: FormData, key: string) => Number.parseInt(text(fd, key), 10);
 
 const IMAGE_LABELS: Record<string, string> = {
   logo: "Le logo",
-  strip: "L'image de décor",
+  strip: "La photo de la carte",
+  tier: "La photo du niveau",
   stamp: "L'icône de tampon",
   "stamp-empty": "L'icône de tampon vide",
 };
@@ -47,7 +48,15 @@ const fileOf = (fd: FormData, key: string): File | null => {
 };
 const num = (fd: FormData, key: string) => Number.parseFloat(text(fd, key).replace(",", "."));
 
-type TierInput = { id?: string; name: string; min_value: number; perk: string | null; color: string | null };
+type TierInput = {
+  id?: string;
+  key?: string;
+  name: string;
+  min_value: number;
+  perk: string | null;
+  color: string | null;
+  remove_image?: boolean;
+};
 type CatalogInput = { id?: string; name: string; cost: number };
 
 function parseJsonList<T>(raw: string): T[] {
@@ -142,9 +151,12 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     stamp_color: text(fd, "stamp_color") || "#FFFFFF",
   };
 
-  const tiers = parseJsonList<TierInput>(text(fd, "tiers_json"))
+  const tierInputs = parseJsonList<TierInput>(text(fd, "tiers_json"));
+  const tiers: Record<string, unknown>[] = tierInputs
     .map((t) => ({
       id: t.id,
+      key: String(t.key ?? ""),
+      remove_image: !!t.remove_image,
       name: String(t.name ?? "").trim().slice(0, 30),
       min_value: Number(t.min_value) || 0,
       perk: String(t.perk ?? "").trim().slice(0, 120) || null,
@@ -170,12 +182,49 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
   if (!Object.values(colors).every(isHexColor)) return { error: "Une couleur n'est pas valide." };
   if (tiersEnabled && tiers.length === 0) return { error: "Ajoute au moins un niveau, ou désactive les niveaux." };
 
+  // Design avancé et boosters
+  const pick = <T extends string>(value: string, allowed: readonly T[], fallback: T): T =>
+    (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+  const clampInt = (value: number, min: number, max: number, fallback: number) =>
+    Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+  const slug = (value: string) => value.replace(/[^a-z]/g, "");
+  const fillColor = text(fd, "fill_color");
+  const multiplier = clampInt(int(fd, "bonus_multiplier"), 1, 3, 1);
+  const startHour = int(fd, "bonus_start_hour");
+  const endHour = int(fd, "bonus_end_hour");
+  if (multiplier > 1 && !(startHour >= 0 && startHour <= 23 && endHour >= 1 && endHour <= 24 && endHour > startHour)) {
+    return { error: "Heures creuses : l'heure de fin doit être après l'heure de début." };
+  }
+  const safeUrl = (key: string) => {
+    const value = text(fd, key);
+    if (!value) return null;
+    try {
+      const u = new URL(value);
+      return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+    } catch {
+      return null;
+    }
+  };
+  const coord = (key: string, limit: number) => {
+    const value = num(fd, key);
+    return Number.isFinite(value) && Math.abs(value) <= limit ? Math.round(value * 1e6) / 1e6 : null;
+  };
+  const latitude = coord("latitude", 90);
+  const longitude = coord("longitude", 180);
+  const label = (key: string) => text(fd, key).slice(0, 16) || null;
+  const signupBonus = clampInt(int(fd, "signup_bonus"), 0, 1000, 0);
+
   const businessFields = {
     name,
     address: optional(fd, "address"),
     phone: optional(fd, "phone"),
     email: optional(fd, "email"),
     max_notifications_per_week: maxNotifs,
+    latitude: latitude !== null && longitude !== null ? latitude : null,
+    longitude: latitude !== null && longitude !== null ? longitude : null,
+    relevant_text: text(fd, "relevant_text").slice(0, 80) || null,
+    google_review_url: safeUrl("google_review_url"),
+    instagram_url: safeUrl("instagram_url"),
   };
   const programFields: Record<string, unknown> = {
     name: programName,
@@ -193,6 +242,25 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     welcome_offer: optional(fd, "welcome_offer"),
     birthday_offer: optional(fd, "birthday_offer"),
     ...colors,
+    decor_preset: slug(text(fd, "decor_preset")) || "none",
+    progress_style: pick(text(fd, "progress_style"), ["glass", "minimal", "grid", "collection", "fill", "none"] as const, "glass"),
+    photo_focus: pick(text(fd, "photo_focus"), ["top", "center", "bottom"] as const, "center"),
+    stamps_position: pick(text(fd, "stamps_position"), ["center", "right", "bottom"] as const, "bottom"),
+    icon_preset: slug(text(fd, "icon_preset")) || "check",
+    collection_icons: text(fd, "collection_icons").split(",").map(slug).filter(Boolean).slice(0, 10),
+    vessel: pick(text(fd, "vessel"), ["glass", "cup"] as const, "glass"),
+    fill_color: isHexColor(fillColor) ? fillColor : "#8FD16A",
+    reward_on_last: fd.get("reward_on_last") === "on",
+    show_logo_text: fd.get("show_logo_text") === "on",
+    label_balance: label("label_balance"),
+    label_customer: label("label_customer"),
+    label_reward: label("label_reward"),
+    // En mode tampons, le bonus d'inscription ne peut pas offrir le cadeau directement
+    signup_bonus: mode === "stamps" ? Math.min(signupBonus, Math.max(0, (threshold || 10) - 1)) : mode === "points" ? signupBonus : 0,
+    bonus_multiplier: multiplier,
+    bonus_start_hour: multiplier > 1 ? startHour : null,
+    bonus_end_hour: multiplier > 1 ? endHour : null,
+    referral_bonus: clampInt(int(fd, "referral_bonus"), 0, 1000, 0),
   };
   if (fd.get("remove_strip_image") === "on") programFields.strip_image_url = null;
   if (fd.get("remove_stamp_icon") === "on") programFields.stamp_icon_url = null;
@@ -237,7 +305,16 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     if (progError || !programData) return { error: `Carte non enregistrée : ${progError?.message}` };
     const program = programData as Program;
 
-    await syncList("program_tiers", program.id, tiers);
+    // Photo propre à chaque niveau (facultative)
+    const tierRows: Record<string, unknown>[] = [];
+    for (const t of tiers) {
+      const { key, remove_image, ...row } = t as Record<string, unknown> & { key: string; remove_image: boolean };
+      const file = key ? fileOf(fd, `tier_image_${key}`) : null;
+      if (file) row.image_url = await uploadImage(file, business.id, "tier");
+      else if (remove_image) row.image_url = null;
+      tierRows.push(row);
+    }
+    await syncList("program_tiers", program.id, tierRows);
     await syncList("reward_catalog", program.id, catalog);
     await supabase.rpc("refresh_program_tiers", { p_program_id: program.id });
 

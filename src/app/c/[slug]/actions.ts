@@ -40,12 +40,18 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const supabase = createAdminClient();
   const { data: business } = await supabase
     .from("businesses")
-    .select("id, status, loyalty_programs(id, is_active, welcome_offer)")
+    .select("id, status, loyalty_programs(id, is_active, welcome_offer, mode, reward_threshold, signup_bonus)")
     .eq("slug", slug)
     .maybeSingle();
-  const program =
-    (business?.loyalty_programs as unknown as { id: string; is_active: boolean; welcome_offer: string | null } | null) ??
-    null;
+  type ProgramRow = {
+    id: string;
+    is_active: boolean;
+    welcome_offer: string | null;
+    mode: "stamps" | "points" | "cashback";
+    reward_threshold: number;
+    signup_bonus: number;
+  };
+  const program = (business?.loyalty_programs as unknown as ProgramRow | null) ?? null;
   if (!business || business.status !== "active" || !program?.is_active) {
     return { error: "Ce programme de fidélité n'est pas disponible." };
   }
@@ -99,9 +105,31 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     ]);
   }
 
+  // Parrainage : le lien d'un ami contient son code (?p=CODE)
+  const refCode = String(fd.get("ref") ?? "").trim().toUpperCase();
+  let referredBy: string | null = null;
+  if (/^[0-9A-F]{8}$/.test(refCode)) {
+    const { data: referrer } = await supabase
+      .from("cards")
+      .select("id")
+      .eq("program_id", program.id)
+      .eq("referral_code", refCode)
+      .maybeSingle();
+    referredBy = referrer?.id ?? null;
+  }
+
+  // Bonus d'inscription : la carte démarre déjà un peu remplie (effet « progrès offert »)
+  const bonus = Math.max(0, program.signup_bonus ?? 0);
+  const start =
+    program.mode === "stamps"
+      ? { stamps_count: Math.min(bonus, Math.max(0, program.reward_threshold - 1)) }
+      : program.mode === "points"
+        ? { points_balance: bonus, lifetime_points: bonus }
+        : {};
+
   const { data: card, error: cardError } = await supabase
     .from("cards")
-    .insert({ customer_id: customerId, program_id: program.id })
+    .insert({ customer_id: customerId, program_id: program.id, referred_by_card_id: referredBy, ...start })
     .select("id, web_token")
     .single();
   if (cardError || !card) return { error: "Création de la carte impossible. Réessaie dans un instant." };

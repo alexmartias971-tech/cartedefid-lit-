@@ -5,7 +5,9 @@ import CardPreview from "@/components/CardPreview";
 import WalletButtons from "@/components/WalletButtons";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured, isGoogleConfigured } from "@/lib/env";
-import { computeCardState, designFromProgram, formatEuro, secondaryField } from "@/lib/card-state";
+import { computeCardState, designFromProgram, formatEuro, photoFor, secondaryField, stripProgress } from "@/lib/card-state";
+import { appUrl } from "@/lib/env";
+import ShareButton from "@/components/ShareButton";
 
 export const metadata = { title: "Ma carte de fidélité" };
 
@@ -51,7 +53,8 @@ export default async function CardPage({
 
       <div className="flex justify-center">
         <CardPreview
-          platform={isAndroid ? "google" : "apple"}
+          platform={isAndroid ? "google" : "poster"}
+          photoUrl={photoFor(program, state.tier)}
           businessName={business.name}
           logoUrl={business.logo_url}
           customerName={customer.first_name}
@@ -59,7 +62,8 @@ export default async function CardPage({
           state={state}
           secondary={secondaryField(program, card, catalog)}
           couponsCount={coupons.length}
-          stripUrl={`/api/strip/${card.serial_number}?v=${new Date(card.updated_at).getTime()}`}
+          progress={stripProgress(program.mode, state, card, catalog)}
+          qrValue={card.serial_number}
         />
       </div>
 
@@ -124,6 +128,34 @@ export default async function CardPage({
           <p className="text-gray-500">{state.rule}</p>
           {program.mode === "cashback" && Number(card.cashback_balance) > 0 && (
             <p>Cagnotte disponible : {formatEuro(card.cashback_balance)}</p>
+          )}
+        </div>
+      )}
+
+      {(program.referral_bonus > 0 || business.google_review_url || business.instagram_url) && (
+        <div className="panel space-y-3 text-center">
+          {program.referral_bonus > 0 && (
+            <div className="space-y-2">
+              <p className="font-semibold">🤝 Parraine un ami</p>
+              <p className="text-sm text-gray-600">
+                À sa première visite, tu gagnes {program.referral_bonus}{" "}
+                {program.mode === "points" ? "points" : `tampon${program.referral_bonus > 1 ? "s" : ""}`} en plus.
+              </p>
+              <ShareButton
+                url={`${appUrl()}/c/${business.slug}?p=${card.referral_code}`}
+                text={`Je te conseille ${business.name} ! Prends ta carte de fidélité ici :`}
+              />
+            </div>
+          )}
+          {business.google_review_url && (
+            <a href={business.google_review_url} target="_blank" rel="noopener" className="btn btn-secondary w-full">
+              ⭐ Donner mon avis sur Google
+            </a>
+          )}
+          {business.instagram_url && (
+            <a href={business.instagram_url} target="_blank" rel="noopener" className="btn btn-secondary w-full">
+              📸 Suivre sur Instagram
+            </a>
           )}
         </div>
       )}

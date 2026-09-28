@@ -8,6 +8,11 @@ export type Business = {
   email: string | null;
   status: "active" | "suspended";
   max_notifications_per_week: number;
+  latitude: number | null;
+  longitude: number | null;
+  relevant_text: string | null;
+  google_review_url: string | null;
+  instagram_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -37,6 +42,24 @@ export type Program = {
   welcome_offer: string | null;
   birthday_offer: string | null;
   max_purchase_amount: number;
+  decor_preset: string;
+  progress_style: "glass" | "minimal" | "grid" | "collection" | "fill" | "none";
+  photo_focus: "top" | "center" | "bottom";
+  stamps_position: "center" | "right" | "bottom";
+  icon_preset: string;
+  collection_icons: string[];
+  vessel: "glass" | "cup";
+  fill_color: string;
+  reward_on_last: boolean;
+  show_logo_text: boolean;
+  label_balance: string | null;
+  label_customer: string | null;
+  label_reward: string | null;
+  signup_bonus: number;
+  bonus_multiplier: number;
+  bonus_start_hour: number | null;
+  bonus_end_hour: number | null;
+  referral_bonus: number;
   created_at: string;
   updated_at: string;
 };
@@ -51,6 +74,8 @@ export type Tier = {
   min_value: number;
   perk: string | null;
   color: string | null;
+  /** Photo de la carte à ce niveau (sinon la photo principale). */
+  image_url: string | null;
   sort: number;
 };
 
@@ -108,6 +133,9 @@ export type Card = {
   lifetime_spent: number;
   lifetime_points: number;
   tier_id: string | null;
+  referral_code: string;
+  referred_by_card_id: string | null;
+  referral_rewarded: boolean;
   created_at: string;
   updated_at: string;
 };
