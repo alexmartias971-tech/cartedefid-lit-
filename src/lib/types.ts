@@ -43,7 +43,7 @@ export type Program = {
   birthday_offer: string | null;
   max_purchase_amount: number;
   decor_preset: string;
-  progress_style: "glass" | "minimal" | "grid" | "collection" | "fill" | "none";
+  progress_style: "glass" | "minimal" | "track" | "grid" | "collection" | "fill" | "none";
   photo_focus: "top" | "center" | "bottom";
   stamps_position: "center" | "right" | "bottom";
   icon_preset: string;
@@ -60,6 +60,12 @@ export type Program = {
   bonus_start_hour: number | null;
   bonus_end_hour: number | null;
   referral_bonus: number;
+  streak_enabled: boolean;
+  streak_goal: number;
+  streak_bonus: number;
+  streak_reminder_dow: number;
+  streak_reminder_hour: number;
+  lap_times_enabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -109,6 +115,7 @@ export type Customer = {
   phone: string | null;
   birth_date: string | null;
   marketing_optin: boolean;
+  leaderboard_optin: boolean;
   created_at: string;
   last_visit_at: string | null;
 };
@@ -136,6 +143,16 @@ export type Card = {
   referral_code: string;
   referred_by_card_id: string | null;
   referral_rewarded: boolean;
+  streak_count: number;
+  streak_best: number;
+  streak_week: string | null;
+  streak_reminded_week: string | null;
+  best_lap_ms: number | null;
+  best_lap_at: string | null;
+  /** Position au classement des meilleurs tours (1 = meilleur). */
+  lap_rank: number | null;
+  /** Nombre de pilotes classés (calculé au chargement, pas en base). */
+  lap_rank_total?: number;
   created_at: string;
   updated_at: string;
 };

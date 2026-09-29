@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { loadCardBundle } from "@/lib/cards";
-import { computeCardState, formatEuro } from "@/lib/card-state";
+import { loadCardBundle, loadCardBundlesByIds } from "@/lib/cards";
+import { computeCardState, formatEuro, formatLap } from "@/lib/card-state";
 import { getMerchantSession } from "@/lib/merchant-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CardBundle } from "@/lib/types";
-import { syncCard } from "@/lib/wallet-sync";
+import { syncCard, syncCards } from "@/lib/wallet-sync";
 
-type Action = "lookup" | "stamp" | "redeem" | "purchase" | "reward" | "cashback" | "coupon" | "undo";
+type Action = "lookup" | "stamp" | "redeem" | "purchase" | "reward" | "cashback" | "coupon" | "undo" | "lap";
 
 /** Ce que l'écran du commerçant affiche après un scan. */
 function view(bundle: CardBundle) {
@@ -33,6 +33,10 @@ function view(bundle: CardBundle) {
     catalog: catalog
       .filter((r) => r.is_active)
       .map((r) => ({ id: r.id, name: r.name, cost: r.cost, affordable: r.cost <= card.points_balance })),
+    lap_enabled: program.lap_times_enabled,
+    best_lap: state.lap,
+    rank: state.rank,
+    streak: state.streak ? { count: state.streak.count, goal: state.streak.goal, thisWeek: state.streak.thisWeek } : null,
   };
 }
 
@@ -52,6 +56,7 @@ export async function POST(request: Request) {
     amount?: number | string;
     reward_id?: string;
     coupon_id?: string;
+    lap_ms?: number;
   };
   const serial = (body.serial ?? "").trim().toLowerCase();
   if (!UUID.test(serial)) {
@@ -92,6 +97,9 @@ export async function POST(request: Request) {
     case "undo":
       call = { fn: "undo_last_action", args: base };
       break;
+    case "lap":
+      call = { fn: "record_lap", args: { ...base, p_ms: Math.round(Number(body.lap_ms)) } };
+      break;
   }
   if (!call) return NextResponse.json({ ok: false, error: "Action inconnue." }, { status: 400 });
 
@@ -110,6 +118,13 @@ export async function POST(request: Request) {
     cashback_added?: number;
     bonus?: boolean;
     referrer_card_id?: string | null;
+    improved?: boolean;
+    best_ms?: number;
+    previous_ms?: number | null;
+    rank?: number | null;
+    previous_rank?: number | null;
+    total?: number;
+    overtaken?: { card_id: string; rank: number }[];
   };
   if (!result.ok) return NextResponse.json(result, { status: 409 });
 
@@ -130,6 +145,16 @@ export async function POST(request: Request) {
   if (body.action === "reward") done = "Cadeau validé ✓ Points déduits.";
   if (body.action === "coupon") done = "Offre validée ✓";
   if (body.action === "undo") done = "Dernier passage annulé.";
+  if (body.action === "lap") {
+    done = result.improved
+      ? `⏱️ Nouveau record : ${formatLap(result.best_ms)}${result.previous_ms ? ` (avant : ${formatLap(result.previous_ms)})` : ""} ! Classement : P${result.rank}${result.total ? ` / ${result.total}` : ""}.`
+      : `Pas de nouveau record (son record : ${formatLap(result.best_ms)}${result.rank ? `, P${result.rank}` : ""}).`;
+  }
+  // Bonus de série déclenché par ce passage ?
+  const streakUp =
+    afterBundle && before.program.streak_enabled && (afterBundle.card.streak_count ?? 0) > 0 &&
+    afterBundle.card.streak_count % before.program.streak_goal === 0 && afterBundle.card.streak_week !== before.card.streak_week;
+  if (streakUp) done += ` 🔥 Série de ${afterBundle!.card.streak_count} semaines : +${before.program.streak_bonus} en bonus !`;
   if (result.bonus && (body.action === "stamp" || body.action === "purchase")) done += ` ⚡ Heures boostées × ${before.program.bonus_multiplier}`;
   if (result.referrer_card_id) done += " 🤝 Le parrain a reçu son bonus.";
 
@@ -139,7 +164,34 @@ export async function POST(request: Request) {
       ? afterBundle.tiers.find((t) => t.id === afterBundle.card.tier_id)
       : null;
   after(async () => {
-    if (tierUp && ["stamp", "purchase"].includes(body.action!)) {
+    if (body.action === "lap" && result.improved) {
+      const climbed = result.previous_rank && result.rank && result.rank < result.previous_rank;
+      await syncCard(cardId, {
+        header: businessName,
+        body: climbed
+          ? `⏱️ Nouveau record : ${formatLap(result.best_ms)} ! Tu passes P${result.rank} au classement 🏁`
+          : `⏱️ Nouveau record : ${formatLap(result.best_ms)} ! Tu es P${result.rank} au classement 🏁`,
+      });
+      // Les pilotes dépassés : leur carte se met à jour (et une alerte s'ils acceptent les messages)
+      const overtaken = (result.overtaken ?? []).slice(0, 30);
+      if (overtaken.length > 0) {
+        const bundles = await loadCardBundlesByIds(overtaken.map((o) => o.card_id));
+        for (const b of bundles) {
+          const pos = overtaken.find((o) => o.card_id === b.card.id)?.rank;
+          await syncCards(
+            [b],
+            b.customer.marketing_optin
+              ? { header: businessName, body: `⚠️ Un pilote vient de te dépasser : tu passes P${pos}. Reviens reprendre ta place ! 🏁` }
+              : undefined,
+          );
+        }
+      }
+    } else if (streakUp) {
+      await syncCard(cardId, {
+        header: businessName,
+        body: `🔥 ${afterBundle!.card.streak_count} semaines d'affilée ! Ton bonus de série est sur ta carte.`,
+      });
+    } else if (tierUp && ["stamp", "purchase"].includes(body.action!)) {
       await syncCard(cardId, { header: businessName, body: `🏆 Bravo, tu passes au niveau ${tierUp.name} !` });
     } else if (body.action === "stamp" && result.reward_ready) {
       await syncCard(cardId, { header: businessName, body: "🎁 Ton cadeau est débloqué ! Montre ta carte en caisse." });

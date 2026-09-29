@@ -17,6 +17,9 @@ export const FORMATS = {
 } as const;
 export type BannerFormat = "apple" | "google";
 
+const FLAME_ICON =
+  '<path d="M12 3q1 4 4 6.5t3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 5 .5c0-2-1.5-3-1.5-5.5 0-1.5.5-3 2.5-4"/>';
+
 /** Icônes au trait (viewBox 24 × 24). */
 export const LINE_ICONS: Record<string, string> = {
   check: '<path d="M20 6 9 17l-5-5"/>',
@@ -44,6 +47,7 @@ export const LINE_ICONS: Record<string, string> = {
   scissors:
     '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
   waves: '<path d="M2 12q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 19q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 5q2.5 2 5 0t5 0 5 0 5 0"/>',
+  flame: FLAME_ICON,
   gift: '<path d="M12 7v14"/><path d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M7.5 7a1 1 0 0 1 0-5A4.8 8 0 0 1 12 7a4.8 8 0 0 1 4.5-5 1 1 0 0 1 0 5"/><rect x="3" y="7" width="18" height="4" rx="1"/>',
 };
 
@@ -64,12 +68,13 @@ export const LINE_ICON_LABELS: Record<string, string> = {
   cake: "Gâteau",
   scissors: "Ciseaux",
   waves: "Vagues",
+  flame: "Flamme",
   check: "Coche",
   gift: "Cadeau",
 };
 
 export type Focus = "top" | "center" | "bottom";
-export type BannerStyle = "glass" | "minimal" | "none";
+export type BannerStyle = "glass" | "minimal" | "track" | "none";
 
 export type BannerOptions = {
   photo?: string | null; // URL ou data: (photo réelle du commerce)
@@ -82,6 +87,8 @@ export type BannerOptions = {
   filled: number;
   icons: string[]; // une icône, ou une collection qui se répète
   rewardOnLast: boolean;
+  /** Série de semaines d'affilée (style « piste ») : flammes allumées / objectif. */
+  streak?: { count: number; goal: number } | null;
 };
 
 function esc(v: string) {
@@ -169,6 +176,149 @@ function minimalDots(o: BannerOptions, W: number, H: number): string {
   }).join("");
 }
 
+
+/* ============================ STYLE « PISTE » (course) ============================ */
+
+/**
+ * Tracé réel de la Karuk'Arena (relevé sur le plan officiel du circuit, même orientation).
+ * Boîte 100 × 88, le premier point est la ligne de départ / arrivée.
+ */
+const TRACK_POINTS: [number, number][] = [[51.8, 73.2], [49.2, 74.8], [47.7, 75.4], [45.9, 76.7], [44.4, 77.9], [42.0, 79.6], [39.2, 81.4], [37.8, 82.3], [36.1, 83.3], [33.7, 84.3], [30.4, 85.5], [27.3, 86.7], [25.8, 87.2], [23.6, 87.5], [20.7, 87.7], [17.0, 87.4], [14.7, 87.0], [12.7, 87.0], [9.8, 87.0], [7.1, 85.8], [5.0, 84.0], [3.5, 82.5], [2.6, 81.5], [0.9, 79.0], [0.0, 75.1], [0.6, 72.1], [0.8, 70.8], [1.3, 69.3], [3.0, 66.1], [4.8, 63.9], [7.4, 62.5], [10.1, 61.5], [12.6, 60.8], [15.2, 59.4], [16.7, 56.1], [16.2, 52.1], [15.6, 48.4], [15.2, 45.1], [14.7, 42.4], [14.6, 40.4], [14.7, 39.4], [15.2, 37.7], [16.3, 35.4], [17.9, 32.8], [19.7, 30.0], [21.5, 27.4], [22.9, 25.6], [24.8, 23.4], [27.3, 21.3], [29.5, 20.3], [31.0, 20.0], [32.3, 20.0], [34.5, 20.6], [37.4, 21.5], [40.6, 22.7], [42.9, 23.7], [45.7, 24.8], [47.5, 25.5], [49.0, 26.0], [52.3, 27.5], [55.9, 29.9], [57.7, 32.0], [58.4, 33.6], [58.3, 34.6], [57.0, 36.3], [55.1, 37.9], [53.8, 38.4], [52.4, 38.2], [50.1, 37.3], [47.9, 36.0], [45.8, 34.6], [43.4, 33.1], [39.8, 32.1], [35.5, 31.9], [33.0, 32.7], [31.4, 34.9], [30.5, 37.3], [30.5, 39.6], [31.2, 42.7], [32.1, 46.4], [32.6, 50.1], [32.7, 51.8], [32.3, 53.5], [31.5, 56.0], [30.5, 58.2], [29.0, 60.4], [27.2, 62.5], [25.4, 64.6], [23.4, 66.7], [21.4, 68.8], [19.3, 71.4], [17.5, 75.3], [17.3, 78.3], [18.7, 79.3], [20.7, 79.3], [23.2, 78.5], [26.4, 76.9], [28.7, 75.3], [30.6, 73.8], [32.6, 72.4], [34.7, 71.0], [36.8, 69.6], [39.1, 68.2], [41.3, 66.9], [43.6, 65.5], [45.9, 64.1], [48.3, 62.8], [51.2, 62.0], [54.4, 61.6], [56.9, 60.5], [59.2, 59.1], [61.5, 57.7], [63.7, 56.4], [66.0, 55.0], [68.1, 53.5], [70.2, 52.1], [72.3, 50.6], [74.4, 49.1], [76.3, 47.4], [77.5, 45.0], [78.0, 41.7], [78.5, 38.6], [79.1, 36.0], [79.4, 33.4], [79.5, 31.7], [79.3, 31.0], [78.7, 29.7], [76.8, 27.4], [74.1, 25.2], [71.1, 23.6], [67.8, 22.0], [64.9, 20.8], [62.5, 19.8], [60.6, 19.0], [58.5, 18.1], [56.0, 17.1], [54.5, 16.5], [53.0, 15.9], [50.0, 14.8], [46.6, 13.5], [43.8, 12.3], [41.3, 10.9], [39.4, 8.6], [38.6, 6.4], [38.9, 5.0], [40.1, 3.1], [42.5, 1.3], [45.3, 0.1], [47.9, 0.2], [51.3, 1.2], [54.4, 2.6], [56.8, 3.7], [58.8, 4.7], [60.6, 5.5], [63.1, 6.8], [65.9, 8.2], [69.7, 10.0], [72.9, 11.5], [74.9, 12.4], [75.9, 12.9], [77.9, 13.9], [80.4, 15.1], [82.1, 15.9], [84.8, 17.2], [87.0, 18.3], [89.2, 19.8], [91.3, 21.2], [93.4, 21.9], [96.6, 22.4], [99.2, 24.0], [99.6, 27.0], [99.4, 29.5], [99.7, 32.7], [100.0, 35.1], [99.6, 36.1], [98.2, 38.2], [95.8, 40.6], [92.5, 43.1], [90.0, 45.0], [88.6, 46.1], [87.3, 46.8], [84.9, 48.3], [81.3, 51.1], [78.5, 53.5], [77.0, 54.6], [75.5, 55.7], [73.5, 57.2], [71.8, 58.3], [70.2, 59.0], [67.8, 60.4], [65.0, 62.6], [62.8, 64.6], [60.7, 66.3], [58.5, 68.0], [56.3, 69.7], [53.4, 72.0]];
+const TRACK_W = 100;
+const TRACK_H = 88;
+
+type Pt = [number, number];
+let trackCache: { pts: Pt[]; len: number[]; total: number } | null = null;
+
+/** Circuit lissé (Chaikin) + longueurs cumulées. */
+function trackGeometry() {
+  if (trackCache) return trackCache;
+  let pts: Pt[] = TRACK_POINTS.map((p) => [p[0], p[1]] as Pt);
+  for (let k = 0; k < 2; k++) {
+    const out: Pt[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    pts = out;
+  }
+  pts.push(pts[0]);
+  const len = [0];
+  for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  trackCache = { pts, len, total: len[len.length - 1] };
+  return trackCache;
+}
+
+/** Point et direction à une fraction t (0-1) du tour. */
+function trackAt(t: number): { p: Pt; a: number; i: number } {
+  const g = trackGeometry();
+  const d = Math.max(0, Math.min(1, t)) * g.total;
+  let i = 1;
+  while (i < g.len.length - 1 && g.len[i] < d) i++;
+  const r = (d - g.len[i - 1]) / Math.max(1e-6, g.len[i] - g.len[i - 1]);
+  const a = g.pts[i - 1], b = g.pts[i];
+  return { p: [a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r], a: Math.atan2(b[1] - a[1], b[0] - a[0]), i };
+}
+
+/** Morceau du circuit entre deux fractions du tour. */
+function trackSlice(t0: number, t1: number): Pt[] {
+  const g = trackGeometry();
+  const a = trackAt(t0), b = trackAt(t1);
+  const out: Pt[] = [a.p];
+  for (let i = a.i; i < b.i; i++) out.push(g.pts[i]);
+  out.push(b.p);
+  return out;
+}
+
+/**
+ * Le circuit en secteurs : un tampon = un secteur allumé en orange néon (comme le plan du circuit).
+ * Les secteurs restants sont gris ; le kart est au bout de la partie allumée ;
+ * la ligne d'arrivée en damier = le cadeau. Tient dans la boîte (x, y, w, h).
+ */
+function trackLayer(o: BannerOptions, box: { x: number; y: number; w: number; h: number }): string {
+  const pad = 0.03;
+  const scale = Math.min((box.w * (1 - pad * 2)) / TRACK_W, (box.h * (1 - pad * 2)) / TRACK_H);
+  const ox = box.x + (box.w - TRACK_W * scale) / 2;
+  const oy = box.y + (box.h - TRACK_H * scale) / 2;
+  const P = (p: Pt) => [ox + p[0] * scale, oy + p[1] * scale] as Pt;
+  const line = (pts: Pt[]) => pts.map((p) => P(p).map((v) => v.toFixed(2)).join(",")).join(" ");
+  const u = scale;
+  const total = Math.max(1, Math.min(30, o.total));
+  const filled = Math.max(0, Math.min(total, o.filled));
+  const accent = o.accent;
+  const hot = "#FFB547";
+  const g = trackGeometry();
+  const all = line(g.pts);
+  const W1 = 4.3 * u; // bord de piste
+  const W2 = 3.1 * u; // asphalte
+
+  // Secteurs allumés (orange néon) ; le secteur suivant est en pointillés
+  const litSectors = Array.from({ length: filled }, (_, i) => line(trackSlice(i / total, (i + 1) / total)));
+  const next = filled < total ? line(trackSlice(filled / total, (filled + 1) / total)) : "";
+
+  // Traits de séparation des secteurs (perpendiculaires à la piste)
+  const ticks = Array.from({ length: total - 1 }, (_, k) => {
+    const { p, a } = trackAt((k + 1) / total);
+    const [cx, cy] = P(p);
+    const dx = Math.cos(a + Math.PI / 2) * W1 * 0.62, dy = Math.sin(a + Math.PI / 2) * W1 * 0.62;
+    const done = k + 1 <= filled;
+    return `<line x1="${cx - dx}" y1="${cy - dy}" x2="${cx + dx}" y2="${cy + dy}" stroke="${done ? "#fff" : "#ffffff"}" stroke-opacity="${done ? 0.95 : 0.4}" stroke-width="${0.9 * u}" stroke-linecap="round"/>`;
+  }).join("");
+
+  // Ligne d'arrivée en damier
+  const start = trackAt(0);
+  const [sx, sy] = P(start.p);
+  const deg = (start.a * 180) / Math.PI + 90;
+  const cell = W1 / 4;
+  const checker = Array.from({ length: 8 }, (_, k) => {
+    const col = k % 4, row = Math.floor(k / 4);
+    return (col + row) % 2 === 0 ? `<rect x="${(col - 2) * cell}" y="${(row - 1) * cell}" width="${cell}" height="${cell}" fill="#fff"/>` : "";
+  }).join("");
+  const finish = `<g transform="translate(${sx} ${sy}) rotate(${deg})"><rect x="${-2 * cell}" y="${-cell}" width="${4 * cell}" height="${2 * cell}" fill="#111"/>${checker}</g>`;
+
+  // Kart en tête
+  const frac = filled / total;
+  const head = trackAt(frac >= 1 ? 0.9999 : frac);
+  const [hx, hy] = P(head.p);
+  const kart =
+    frac > 0 && frac < 1
+      ? `<circle cx="${hx}" cy="${hy}" r="${4.4 * u}" fill="${hot}" opacity=".6" filter="url(#tglow)"/><circle cx="${hx}" cy="${hy}" r="${2.4 * u}" fill="#fff"/><circle cx="${hx}" cy="${hy}" r="${1.25 * u}" fill="${accent}"/>`
+      : "";
+
+  // Cadeau sous la ligne d'arrivée (s'allume quand le tour est bouclé)
+  const done = frac >= 1;
+  const gx = sx + Math.cos(start.a + Math.PI / 2) * 6.8 * u, gy = sy + Math.sin(start.a + Math.PI / 2) * 6.8 * u;
+  const gift = o.rewardOnLast
+    ? `<g transform="translate(${gx} ${gy})">${done ? `<circle r="${4.6 * u}" fill="${hot}" opacity=".6" filter="url(#tglow)"/>` : ""}<circle r="${3.3 * u}" fill="${done ? accent : "#111"}" stroke="${accent}" stroke-width="${0.45 * u}"/>${icon("gift", 0, 0, 3.8 * u, done ? "#111" : accent, 1, 2)}</g>`
+    : "";
+
+  return `<defs>
+      <filter id="tglow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${1.5 * u}"/></filter>
+      <radialGradient id="tvig" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#000" stop-opacity=".88"/><stop offset=".62" stop-color="#000" stop-opacity=".7"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="${box.x + box.w / 2}" cy="${box.y + box.h / 2}" rx="${TRACK_W * scale * 0.85}" ry="${TRACK_H * scale * 0.78}" fill="url(#tvig)"/>
+    <polyline points="${all}" fill="none" stroke="#ffffff" stroke-opacity=".34" stroke-width="${W1}" stroke-linejoin="round"/>
+    <polyline points="${all}" fill="none" stroke="#151515" stroke-width="${W2}" stroke-linejoin="round"/>
+    ${litSectors.map((pts) => `<polyline points="${pts}" fill="none" stroke="${accent}" stroke-width="${W1 * 1.25}" stroke-linejoin="round" opacity=".55" filter="url(#tglow)"/>`).join("")}
+    ${litSectors.map((pts) => `<polyline points="${pts}" fill="none" stroke="${accent}" stroke-width="${W1}" stroke-linejoin="round"/><polyline points="${pts}" fill="none" stroke="#1a1208" stroke-width="${W2}" stroke-linejoin="round"/><polyline points="${pts}" fill="none" stroke="${accent}" stroke-opacity=".28" stroke-width="${W2}" stroke-linejoin="round"/>`).join("")}
+    ${next ? `<polyline points="${next}" fill="none" stroke="${accent}" stroke-opacity=".9" stroke-width="${0.7 * u}" stroke-dasharray="${1.4 * u} ${1.1 * u}" stroke-linejoin="round"/>` : ""}
+    ${ticks}${finish}${gift}${kart}`;
+}
+
+/** Flammes de la série (semaines d'affilée) : goal flammes, count allumées. */
+function streakPips(o: BannerOptions, cx: number, cy: number, size: number): string {
+  if (!o.streak || o.streak.goal < 2) return "";
+  const goal = Math.min(8, o.streak.goal);
+  const lit = o.streak.count <= 0 ? 0 : o.streak.count % goal === 0 ? goal : o.streak.count % goal;
+  const gap = size * 1.25;
+  const x0 = cx - ((goal - 1) * gap) / 2;
+  return Array.from({ length: goal }, (_, i) =>
+    i < lit
+      ? `<circle cx="${x0 + i * gap}" cy="${cy}" r="${size * 0.62}" fill="${o.accent}" opacity=".35" filter="url(#tglow)"/>${icon("flame", x0 + i * gap, cy, size, "#FFD34D", 1, 2.1)}`
+      : icon("flame", x0 + i * gap, cy, size, "#ffffff", 0.35, 1.6),
+  ).join("");
+}
+
 function prefixIds(svg: string, uid: string) {
   return svg.replace(/id="([\w-]+)"/g, `id="${uid}-$1"`).replace(/url\(#([\w-]+)\)/g, `url(#${uid}-$1)`);
 }
@@ -180,7 +330,14 @@ export function buildBannerSvg(o: BannerOptions, format: BannerFormat, width?: n
     o.photo && o.style !== "none"
       ? `<defs><linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1"><stop offset=".35" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".42"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#scrim)"/>`
       : "";
-  const progress = o.style === "glass" ? glassBand(o, W, H) : o.style === "minimal" ? minimalDots(o, W, H) : "";
+  const progress =
+    o.style === "glass"
+      ? glassBand(o, W, H)
+      : o.style === "minimal"
+        ? minimalDots(o, W, H)
+        : o.style === "track"
+          ? trackLayer(o, { x: W * 0.2, y: 3, w: W * 0.6, h: H - 6 }) + streakPips(o, W * 0.12, H - 14, 12)
+          : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${backdrop(o, W, H, "bg")}${scrim}${progress}</svg>`;
   return prefixIds(svg, uid);
 }
@@ -202,7 +359,10 @@ export function buildPosterSvg(
     o.style && o.style !== "none" && o.total
       ? o.style === "glass"
         ? glassBand(o as BannerOptions, W, H, 58)
-        : minimalDots(o as BannerOptions, W, 86)
+        : o.style === "track"
+          ? // Marges de sécurité : l'iPhone agrandit l'image et rogne un peu les côtés ; le QR code arrive vers y = 225.
+            trackLayer(o as BannerOptions, { x: 24, y: 36, w: W - 48, h: 168 })
+          : minimalDots(o as BannerOptions, W, 86)
       : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">
     ${backdrop(o, W, H, "bg")}
@@ -215,7 +375,7 @@ export function buildPosterSvg(
       </linearGradient>
     </defs>
     <rect width="${W}" height="${H * 0.26}" fill="url(#top)"/>
-    <rect y="${H * 0.46}" width="${W}" height="${H * 0.54}" fill="url(#bottom)"/>
+    <rect y="${H * 0.58}" width="${W}" height="${H * 0.42}" fill="url(#bottom)"/>
     ${stamps}
   </svg>`;
   return prefixIds(svg, uid);

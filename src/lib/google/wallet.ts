@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, designFromProgram, fieldLabels } from "@/lib/card-state";
+import { computeCardState, designFromProgram, fieldLabels, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -87,6 +87,9 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
   const state = computeCardState(program, card, tiers, catalog);
   const labels = fieldLabels(designFromProgram(program), state);
   const textModulesData = [{ id: "status", header: "Ta carte", body: state.sentence }];
+  const streakText = streakSentence(state, program.streak_bonus, program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€");
+  if (streakText) textModulesData.unshift({ id: "streak", header: `Série : ${state.streak?.count ?? 0} semaine(s)`, body: streakText });
+  if (state.lap) textModulesData.unshift({ id: "lap", header: "Ton record", body: `${state.lap} — bats-le au prochain passage !` });
   if (coupons.length > 0) {
     textModulesData.push({ id: "coupons", header: "Tes offres", body: coupons.map((c) => `• ${c.title}`).join("\n") });
   }
@@ -130,7 +133,15 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     accountId: card.serial_number,
     accountName: customer.first_name,
     loyaltyPoints: { label: labels.balance, balance: { string: state.balanceValue } },
-    ...(state.tier ? { secondaryLoyaltyPoints: { label: "niveau", balance: { string: state.tier.name } } } : {}),
+    ...(state.rank
+      ? { secondaryLoyaltyPoints: { label: "Classement", balance: { string: `P${state.rank.pos} / ${state.rank.total}` } } }
+      : state.lap
+      ? { secondaryLoyaltyPoints: { label: "Record", balance: { string: state.lap } } }
+      : state.streak
+        ? { secondaryLoyaltyPoints: { label: "Série", balance: { string: `🔥 ${state.streak.count} sem.` } } }
+        : state.tier
+          ? { secondaryLoyaltyPoints: { label: "niveau", balance: { string: state.tier.name } } }
+          : {}),
     barcode: { type: "QR_CODE", value: card.serial_number, alternateText: customer.first_name },
     hexBackgroundColor: state.tier?.color || program.background_color,
     heroImage: {

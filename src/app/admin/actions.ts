@@ -243,7 +243,7 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     birthday_offer: optional(fd, "birthday_offer"),
     ...colors,
     decor_preset: slug(text(fd, "decor_preset")) || "none",
-    progress_style: pick(text(fd, "progress_style"), ["glass", "minimal", "grid", "collection", "fill", "none"] as const, "glass"),
+    progress_style: pick(text(fd, "progress_style"), ["glass", "minimal", "track", "grid", "collection", "fill", "none"] as const, "glass"),
     photo_focus: pick(text(fd, "photo_focus"), ["top", "center", "bottom"] as const, "center"),
     stamps_position: pick(text(fd, "stamps_position"), ["center", "right", "bottom"] as const, "bottom"),
     icon_preset: slug(text(fd, "icon_preset")) || "check",
@@ -261,6 +261,12 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     bonus_start_hour: multiplier > 1 ? startHour : null,
     bonus_end_hour: multiplier > 1 ? endHour : null,
     referral_bonus: clampInt(int(fd, "referral_bonus"), 0, 1000, 0),
+    streak_enabled: fd.get("streak_enabled") === "on",
+    streak_goal: clampInt(int(fd, "streak_goal"), 2, 52, 4),
+    streak_bonus: clampInt(int(fd, "streak_bonus"), 0, 1000, 1),
+    streak_reminder_dow: clampInt(int(fd, "streak_reminder_dow"), 0, 6, 0),
+    streak_reminder_hour: clampInt(int(fd, "streak_reminder_hour"), 0, 23, 11),
+    lap_times_enabled: fd.get("lap_times_enabled") === "on",
   };
   if (fd.get("remove_strip_image") === "on") programFields.strip_image_url = null;
   if (fd.get("remove_stamp_icon") === "on") programFields.stamp_icon_url = null;

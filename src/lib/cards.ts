@@ -38,7 +38,26 @@ export async function loadCardBundle(
   const supabase = createAdminClient();
   const { data, error } = await supabase.from("cards").select(SELECT).eq(column, value).maybeSingle();
   if (error) throw new Error(error.message);
-  return data ? toBundle(data as Row) : null;
+  if (!data) return null;
+  const [bundle] = await withRankTotals([toBundle(data as Row)]);
+  return bundle;
+}
+
+/** Ajoute le nombre de pilotes classés (pour afficher « P3 / 48 »). */
+async function withRankTotals(bundles: CardBundle[]): Promise<CardBundle[]> {
+  const programs = [...new Set(bundles.filter((b) => b.program.lap_times_enabled).map((b) => b.program.id))];
+  if (programs.length === 0) return bundles;
+  const supabase = createAdminClient();
+  const totals = new Map<string, number>();
+  for (const id of programs) {
+    const { count } = await supabase
+      .from("cards")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", id)
+      .not("best_lap_ms", "is", null);
+    totals.set(id, count ?? 0);
+  }
+  return bundles.map((b) => (totals.has(b.program.id) ? { ...b, card: { ...b.card, lap_rank_total: totals.get(b.program.id) } } : b));
 }
 
 /** Charge plusieurs cartes d'un coup (pour les notifications). */
@@ -47,5 +66,5 @@ export async function loadCardBundlesByIds(ids: string[]): Promise<CardBundle[]>
   const supabase = createAdminClient();
   const { data, error } = await supabase.from("cards").select(SELECT).in("id", ids);
   if (error) throw new Error(error.message);
-  return (data as Row[]).map(toBundle);
+  return withRankTotals((data as Row[]).map(toBundle));
 }

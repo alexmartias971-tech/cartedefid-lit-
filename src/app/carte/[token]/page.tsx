@@ -132,6 +132,12 @@ export default async function CardPage({
         </div>
       )}
 
+      {program.lap_times_enabled && (
+        <a href={`/classement/${business.slug}`} className="btn btn-primary w-full">
+          🏆 Voir le classement{state.rank ? ` (tu es P${state.rank.pos})` : ""}
+        </a>
+      )}
+
       {(program.referral_bonus > 0 || business.google_review_url || business.instagram_url) && (
         <div className="panel space-y-3 text-center">
           {program.referral_bonus > 0 && (

@@ -29,6 +29,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const birthDate = String(fd.get("birth_date") ?? "") || null;
   const privacy = fd.get("privacy") === "on";
   const marketing = fd.get("marketing") === "on";
+  const leaderboard = fd.get("leaderboard") === "on";
 
   if (!firstName) return { error: "Indique ton prénom." };
   if (!email && !phone) return { error: "Indique ton email ou ton téléphone." };
@@ -88,6 +89,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
         phone,
         birth_date: birthDate,
         marketing_optin: marketing,
+        leaderboard_optin: leaderboard,
       })
       .select("id")
       .single();

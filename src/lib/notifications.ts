@@ -276,3 +276,29 @@ export async function runBirthdays(): Promise<number> {
   }
   return count;
 }
+
+/**
+ * Rappel de série : le jour choisi (ex : dimanche 11 h), les clients qui ont une série en cours
+ * mais ne sont pas encore venus cette semaine reçoivent « Ta série s'arrête ce soir ! ».
+ * Un seul rappel par semaine et par client, seulement s'il accepte les offres.
+ */
+export async function runStreakReminders(): Promise<number> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc("streak_cards_to_remind");
+  if (error) {
+    console.error("[runStreakReminders]", error.message);
+    return 0;
+  }
+  type Row = { card_id: string; first_name: string; business_name: string; streak: number };
+  const rows = (data ?? []) as Row[];
+  const local = new Date(Date.now() - GP_OFFSET);
+  const dow = (local.getUTCDay() + 6) % 7;
+  const monday = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - dow)).toISOString().slice(0, 10);
+  for (const row of rows) {
+    const message = `🔥 ${row.first_name}, ta série de ${row.streak} semaine${row.streak > 1 ? "s" : ""} s'arrête ce soir ! Passe nous voir pour la garder.`.slice(0, 180);
+    await supabase.from("cards").update({ last_message: message, streak_reminded_week: monday }).eq("id", row.card_id);
+    const bundles = await loadCardBundlesByIds([row.card_id]);
+    await syncCards(bundles, { header: row.business_name, body: message });
+  }
+  return rows.length;
+}

@@ -1,7 +1,7 @@
 import "server-only";
 import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, designFromProgram, fieldLabels } from "@/lib/card-state";
+import { computeCardState, designFromProgram, fieldLabels, posterFields, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
 import { primaryLogoPng, squareLogoPng, wideLogoPng } from "@/lib/logo";
 import { renderCardPoster, renderCardStrip } from "@/lib/strip";
@@ -112,7 +112,11 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     program.mode !== "cashback" && !["none", "fill"].includes(design.progressStyle) && (program.mode === "stamps" || design.progressStyle !== "grid");
   if (!drawsCells) store.primaryFields.push({ key: "big", label: labels.balance, value: state.balanceValue });
   store.secondaryFields.push({ key: "customer", label: labels.customer, value: customer.first_name });
-  if (program.mode === "stamps") {
+  const unit = program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€";
+  const streakText = streakSentence(state, program.streak_bonus, unit);
+  if (state.lap) {
+    store.secondaryFields.push({ key: "lap", label: "RECORD", value: state.lap, changeMessage: "⏱️ Nouveau record : %@ !" });
+  } else if (program.mode === "stamps") {
     store.secondaryFields.push({ key: "reward", label: labels.reward ?? "CADEAU", value: program.reward_description });
   } else if (program.mode === "points") {
     const next = catalog.find((r) => r.is_active && r.cost > card.points_balance);
@@ -121,6 +125,17 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     store.secondaryFields.push({ key: "rate", label: "CASHBACK", value: `${Number(program.cashback_percent)} %` });
   }
   if (state.tier) store.auxiliaryFields.push({ key: "tier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" });
+  if (state.rank) {
+    store.headerFields.unshift({
+      key: "rank",
+      label: "CLASSEMENT",
+      value: `P${state.rank.pos}`,
+      ...(customer.marketing_optin ? { changeMessage: "Classement : %@" } : {}),
+    });
+  }
+  if (state.streak) {
+    store.auxiliaryFields.push({ key: "streak", label: "SÉRIE", value: `🔥 ${state.streak.count} sem.`, textAlignment: "PKTextAlignmentRight" });
+  }
   if (coupons.length > 0) {
     store.auxiliaryFields.push({
       key: "offers",
@@ -130,6 +145,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   }
 
   // Dos de la carte. "changeMessage" = le texte qui s'affiche en notification quand la valeur change.
+  if (streakText) store.backFields.push({ key: "streakinfo", label: "Ta série", value: `${streakText}\nMeilleure série : ${state.streak?.best ?? 0} semaine(s).` });
   store.backFields.push(
     { key: "status", label: "Ta carte", value: state.sentence, changeMessage: "%@" },
     {
@@ -165,6 +181,14 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
       key: "referral",
       label: "Parraine un ami",
       value: `Envoie ce lien à un ami : ${shareUrl}\nÀ sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "points" : "tampon(s)"} en plus.`,
+      dataDetectorTypes: ["PKDataDetectorTypeLink"],
+    });
+  }
+  if (program.lap_times_enabled) {
+    store.backFields.push({
+      key: "leaderboard",
+      label: "Classement",
+      value: `${state.rank ? `Tu es P${state.rank.pos} sur ${state.rank.total}. ` : ""}Le classement complet : ${url}/classement/${business.slug}`,
       dataDetectorTypes: ["PKDataDetectorTypeLink"],
     });
   }
@@ -208,16 +232,15 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
 
   // iOS 27 et plus : carte « poster » (photo plein format). Les iPhone plus anciens gardent la carte classique.
   const poster = new PassType("posterGeneric");
-  poster.headerFields.push(
-    state.tier
-      ? { key: "ptier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" }
-      : { key: "pbalance-h", label: labels.balance, value: state.balanceValue },
+  // Disposition Apple iOS 27 : en-tête en haut à droite, QR code au milieu, champs en bas, 1 ligne de pied.
+  const pf = posterFields(state, labels, customer.first_name);
+  // L'alerte « classement » seulement pour les clients qui acceptent les messages
+  const header = pf.header.key === "prank" && !customer.marketing_optin ? { ...pf.header, changeMessage: undefined } : pf.header;
+  poster.headerFields.push({ ...header, textAlignment: "PKTextAlignmentRight" });
+  pf.primary.forEach((f, i) =>
+    poster.primaryFields.push(i === pf.primary.length - 1 ? { ...f, textAlignment: "PKTextAlignmentRight" } : f),
   );
-  poster.primaryFields.push(
-    { key: "pbalance", label: labels.balance, value: state.balanceValue },
-    { key: "pcustomer", label: labels.customer, value: customer.first_name },
-  );
-  poster.footerFields.push({ key: "pstatus", value: state.sentence, changeMessage: "%@" });
+  poster.footerFields.push({ key: "pstatus", value: pf.footer, changeMessage: "%@" });
   poster.backFields.push(...store.backFields.map((f) => ({ ...f, key: `p-${f.key}` })));
 
   pass.types.push(poster, store);

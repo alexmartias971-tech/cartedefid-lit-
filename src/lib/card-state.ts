@@ -20,7 +20,8 @@ export function formatEuro(value: number): string {
 type ProgramLike = Pick<
   Program,
   "mode" | "reward_threshold" | "reward_description" | "points_per_euro" | "cashback_percent" | "tiers_enabled" | "tier_basis"
->;
+> &
+  Partial<Pick<Program, "streak_enabled" | "streak_goal" | "lap_times_enabled" | "progress_style">>;
 
 type CardLike = {
   stamps_count: number;
@@ -29,7 +30,40 @@ type CardLike = {
   lifetime_visits: number;
   lifetime_spent: number;
   tier_id: string | null;
+  streak_count?: number;
+  streak_best?: number;
+  streak_week?: string | null;
+  best_lap_ms?: number | null;
+  lap_rank?: number | null;
+  lap_rank_total?: number;
 };
+
+/** Lundi (AAAA-MM-JJ) de la semaine en cours, heure de Guadeloupe (UTC-4). */
+export function currentWeekStart(now = new Date()): string {
+  const local = new Date(now.getTime() - 4 * 3600 * 1000);
+  const dow = (local.getUTCDay() + 6) % 7;
+  const monday = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - dow));
+  return monday.toISOString().slice(0, 10);
+}
+
+/** Série encore vivante ? (venu cette semaine ou la semaine dernière) */
+export function liveStreak(card: CardLike, now = new Date()): { count: number; thisWeek: boolean } {
+  if (!card.streak_week || !card.streak_count) return { count: 0, thisWeek: false };
+  const week = currentWeekStart(now);
+  const last = new Date(`${week}T00:00:00Z`);
+  last.setUTCDate(last.getUTCDate() - 7);
+  if (card.streak_week === week) return { count: card.streak_count, thisWeek: true };
+  if (card.streak_week === last.toISOString().slice(0, 10)) return { count: card.streak_count, thisWeek: false };
+  return { count: 0, thisWeek: false };
+}
+
+/** 38412 ms → "38.412" ; 62345 → "1:02.345" */
+export function formatLap(ms: number | null | undefined): string | null {
+  if (!ms) return null;
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3).padStart(6, "0");
+  return m > 0 ? `${m}:${s}` : String(Number(s).toFixed(3));
+}
 
 export type CardState = {
   /** Petit titre en haut à droite (ex : "TAMPONS"). */
@@ -49,6 +83,12 @@ export type CardState = {
   rewardReady: boolean;
   /** Cadeaux du catalogue que le client peut déjà prendre (mode points). */
   affordable: CatalogReward[];
+  /** Série de semaines d'affilée (si activée). */
+  streak: { count: number; goal: number; thisWeek: boolean; best: number } | null;
+  /** Meilleur tour, déjà mis en forme (si activé). */
+  lap: string | null;
+  /** Position au classement des meilleurs tours (si activé et si le client a un temps). */
+  rank: { pos: number; total: number } | null;
 };
 
 export function computeCardState(
@@ -57,6 +97,24 @@ export function computeCardState(
   tiers: Tier[] = [],
   catalog: CatalogReward[] = [],
 ): CardState {
+  const base = computeBaseState(program, card, tiers, catalog);
+  const live = liveStreak(card);
+  const streak = program.streak_enabled
+    ? { count: live.count, goal: program.streak_goal ?? 4, thisWeek: live.thisWeek, best: card.streak_best ?? 0 }
+    : null;
+  const rank =
+    program.lap_times_enabled && card.lap_rank
+      ? { pos: card.lap_rank, total: Math.max(card.lap_rank_total ?? card.lap_rank, card.lap_rank) }
+      : null;
+  return { ...base, streak, lap: program.lap_times_enabled ? formatLap(card.best_lap_ms) : null, rank };
+}
+
+function computeBaseState(
+  program: ProgramLike,
+  card: CardLike,
+  tiers: Tier[] = [],
+  catalog: CatalogReward[] = [],
+): Omit<CardState, "streak" | "lap" | "rank"> {
   const threshold = program.reward_threshold;
   const sortedTiers = [...tiers].sort((a, b) => Number(a.min_value) - Number(b.min_value));
   const tier = program.tiers_enabled ? (sortedTiers.find((t) => t.id === card.tier_id) ?? null) : null;
@@ -116,7 +174,16 @@ export function computeCardState(
   const left = threshold - card.stamps_count;
   let sentence = `Merci pour ta visite ! ${filled}/${threshold} tampons.`;
   if (card.stamps_count >= threshold) sentence = `🎁 Cadeau débloqué : ${program.reward_description} ! Montre ta carte en caisse.`;
-  else if (card.stamps_count === 0) sentence = `${threshold} tampons = ${program.reward_description}.`;
+  else if (card.stamps_count === 0)
+    sentence =
+      program.progress_style === "track"
+        ? `${threshold} secteurs = 1 tour complet = ${program.reward_description}.`
+        : `${threshold} tampons = ${program.reward_description}.`;
+  else if (program.progress_style === "track")
+    sentence =
+      left === 1
+        ? `Dernier secteur avant la ligne d'arrivée : ${program.reward_description} !`
+        : `Plus que ${left} secteurs pour boucler le tour : ${program.reward_description}.`;
   else if (left === 1) sentence = `Plus qu'un passage avant ton cadeau : ${program.reward_description} !`;
   else sentence = `Plus que ${left} passages avant ton cadeau : ${program.reward_description}.`;
   return {
@@ -130,6 +197,16 @@ export function computeCardState(
     rewardReady: card.stamps_count >= threshold,
     affordable: [],
   };
+}
+
+/** Phrase de la série (à afficher sous la carte ou en notification). */
+export function streakSentence(state: CardState, bonus: number, unit: string): string | null {
+  const st = state.streak;
+  if (!st) return null;
+  const toGoal = st.goal - (st.count % st.goal);
+  if (st.count === 0) return `🔥 Viens chaque semaine : ${st.goal} semaines d'affilée = ${bonus} ${unit} en bonus.`;
+  if (st.thisWeek) return `🔥 Série de ${st.count} semaine${st.count > 1 ? "s" : ""} ! Encore ${toGoal} pour ton bonus. À la semaine prochaine !`;
+  return `🔥 Ta série de ${st.count} semaine${st.count > 1 ? "s" : ""} continue si tu viens avant dimanche soir !`;
 }
 
 /** Offres encore valables (non utilisées, non expirées). */
@@ -220,6 +297,16 @@ export function stripProgress(
   state: CardState,
   card: { points_balance: number },
   catalog: CatalogReward[],
+): Progress {
+  const streak = state.streak ? { count: state.streak.count, goal: state.streak.goal } : null;
+  return { ...baseProgress(mode, state, card, catalog), streak };
+}
+
+function baseProgress(
+  mode: RewardMode,
+  state: CardState,
+  card: { points_balance: number },
+  catalog: CatalogReward[],
 ): { total: number; filled: number } {
   if (mode === "stamps" && state.stamps) return state.stamps;
   if (mode === "points") {
@@ -237,7 +324,7 @@ export function stripOptions(
   hrefs?: { decor?: string | null; icon?: string | null; iconEmpty?: string | null },
 ): StripOptions {
   // En mode cashback, pas de cases : la bannière reste décorative (sauf jauge)
-  const raw = design.progressStyle === "glass" || design.progressStyle === "minimal" ? "collection" : design.progressStyle;
+  const raw = ["glass", "minimal", "track"].includes(design.progressStyle) ? "collection" : (design.progressStyle as Exclude<CardDesign["progressStyle"], "glass" | "minimal" | "track">);
   const style = design.mode === "cashback" && raw !== "none" ? "none" : raw;
   const pointsGrid = design.mode === "points" && (style === "grid" || style === "collection");
   return {
@@ -263,17 +350,23 @@ export function stripOptions(
 
 /** Styles « photo » (nouveau moteur) : bandeau en verre dépoli ou points fins. */
 export function isPhotoStyle(style: CardDesign["progressStyle"]) {
-  return style === "glass" || style === "minimal";
+  return style === "glass" || style === "minimal" || style === "track";
 }
+
+type Progress = { total: number; filled: number; streak?: { count: number; goal: number } | null };
 
 /** Options du moteur photo à partir du design (et d'une photo déjà convertie côté serveur). */
 export function bannerOptions(
   design: CardDesign,
-  progress: { total: number; filled: number },
+  progress: Progress,
   photo?: string | null,
 ): BannerOptions {
   const style: BannerStyle =
-    design.mode === "cashback" ? "none" : design.progressStyle === "minimal" ? "minimal" : design.progressStyle === "none" ? "none" : "glass";
+    design.mode === "cashback"
+      ? "none"
+      : design.progressStyle === "minimal" || design.progressStyle === "track" || design.progressStyle === "none"
+        ? design.progressStyle
+        : "glass";
   return {
     photo: photo !== undefined ? photo : design.stripImageUrl,
     focus: design.photoFocus,
@@ -289,6 +382,7 @@ export function bannerOptions(
         : [design.iconPreset]
       : [design.iconPreset],
     rewardOnLast: design.rewardOnLast,
+    streak: progress.streak ?? null,
   };
 }
 
@@ -298,7 +392,7 @@ export function bannerOptions(
  */
 export function cardBannerSvg(
   design: CardDesign,
-  progress: { total: number; filled: number },
+  progress: Progress,
   format: BannerFormat,
   width: number,
   height: number,
@@ -321,7 +415,7 @@ export function cardPosterSvg(
   height: number,
   uid: string,
   photo?: string | null,
-  progress?: { total: number; filled: number },
+  progress?: Progress,
 ): string {
   const base = bannerOptions(design, progress ?? { total: 0, filled: 0 }, photo !== undefined ? photo : design.stripImageUrl);
   return buildPosterSvg(progress ? base : { ...base, style: "none" }, width, height, uid);
@@ -349,4 +443,38 @@ export function programPitch(
         ? `${Number(program.cashback_percent)} % de tes achats reversés sur ta cagnotte`
         : `${program.reward_threshold} passages = ${program.reward_description}`;
   return program.welcome_offer ? `${base} · Bienvenue : ${program.welcome_offer}` : base;
+}
+
+export type Field = { key: string; label: string; value: string; changeMessage?: string };
+
+/**
+ * Champs de la carte « poster » (iPhone iOS 27) — utilisés par la vraie carte ET par l'aperçu.
+ * En-tête (1), champs du bas (4 max, le solde toujours à droite), pied (1 ligne).
+ */
+export function posterFields(
+  state: CardState,
+  labels: { balance: string; customer: string },
+  customerName: string,
+): { header: Field; primary: Field[]; footer: string } {
+  const streakVal = state.streak ? `🔥 ${state.streak.count} SEM.` : "";
+  const header: Field = state.rank
+    ? { key: "prank", label: "CLASSEMENT", value: `P${state.rank.pos} / ${state.rank.total}`, changeMessage: "Classement : %@" }
+    : state.streak
+      ? { key: "pstreak", label: "SÉRIE", value: streakVal }
+      : state.tier
+        ? { key: "ptier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" }
+        : { key: "pbalance-h", label: labels.balance, value: state.balanceValue };
+  const extra: Field[] = [];
+  if (state.lap) extra.push({ key: "plap", label: "RECORD", value: state.lap, changeMessage: "⏱️ Nouveau record : %@ !" });
+  if (state.streak && header.key !== "pstreak") extra.push({ key: "pstreak2", label: "SÉRIE", value: streakVal });
+  if (state.tier && header.key !== "ptier") extra.push({ key: "ptier2", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" });
+  const shown = extra.slice(0, 2);
+  const primary: Field[] = [
+    { key: "pcustomer", label: labels.customer, value: customerName },
+    ...shown,
+    { key: "pbalance", label: labels.balance, value: state.balanceValue },
+  ];
+  const tierHidden = state.tier && header.key !== "ptier" && !shown.some((f) => f.key === "ptier2");
+  const footer = tierHidden ? `${state.tier!.name} · ${state.sentence}` : state.sentence;
+  return { header, primary, footer };
 }

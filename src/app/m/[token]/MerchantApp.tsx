@@ -23,7 +23,20 @@ type CardInfo = {
   next_tier: { name: string; remaining: string } | null;
   coupons: { id: string; title: string; expires_at: string | null }[];
   catalog: { id: string; name: string; cost: number; affordable: boolean }[];
+  lap_enabled: boolean;
+  best_lap: string | null;
+  rank: { pos: number; total: number } | null;
+  streak: { count: number; goal: number; thisWeek: boolean } | null;
 };
+
+/** "38,412" / "38.412" / "1:02.345" → millisecondes */
+function parseLap(text: string): number | null {
+  const t = text.trim().replace(",", ".");
+  const m = /^(?:(\d{1,2}):)?(\d{1,3})(?:\.(\d{1,3}))?$/.exec(t);
+  if (!m) return null;
+  const ms = (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + Number((m[3] ?? "0").padEnd(3, "0"));
+  return ms > 0 ? ms : null;
+}
 type Html5QrcodeInstance = {
   start: (...a: unknown[]) => Promise<unknown>;
   stop: () => Promise<void>;
@@ -116,6 +129,7 @@ function Scanner() {
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
   const [useAmount, setUseAmount] = useState("");
+  const [lap, setLap] = useState("");
   const [confirm, setConfirm] = useState<{ label: string; run: () => void } | null>(null);
 
   const stopCamera = useCallback(async () => {
@@ -222,6 +236,18 @@ function Scanner() {
             )}
             <p className="mt-2 text-xs font-semibold tracking-wider text-gray-500">{card.balance_label}</p>
             <p className="text-4xl font-extrabold tabular-nums">{card.balance_value}</p>
+            {card.streak && (
+              <p className="mt-1 text-sm font-semibold">
+                🔥 Série : {card.streak.count} semaine{card.streak.count > 1 ? "s" : ""}
+                {card.streak.thisWeek ? " (déjà venu cette semaine)" : ""}
+              </p>
+            )}
+            {card.lap_enabled && (
+              <p className="text-sm">
+                ⏱️ Record : {card.best_lap ?? "aucun pour l'instant"}
+                {card.rank ? ` · 🏆 P${card.rank.pos} / ${card.rank.total}` : ""}
+              </p>
+            )}
             {card.stamps && (
               <div className="mt-2 flex flex-wrap justify-center gap-1.5">
                 {Array.from({ length: card.stamps.total }).map((_, i) => (
@@ -301,6 +327,31 @@ function Scanner() {
                   onChange={(e) => setUseAmount(e.target.value.replace(/[^\d.,]/g, ""))} />
                 <button type="submit" disabled={busy} className="btn btn-secondary shrink-0">Déduire</button>
               </div>
+            </form>
+          )}
+
+          {/* Record personnel (chrono) */}
+          {card.lap_enabled && (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const ms = parseLap(lap);
+                if (!ms) {
+                  setMessage({ ok: false, text: "Temps invalide. Exemple : 38,412 ou 1:02,345" });
+                  return;
+                }
+                void send("lap", { lap_ms: ms });
+                setLap("");
+              }}
+            >
+              <label htmlFor="chrono" className="label">⏱️ Meilleur tour de la session (secondes)</label>
+              <div className="flex gap-2">
+                <input id="chrono" inputMode="decimal" className="input text-xl" value={lap} placeholder="38,412"
+                  onChange={(e) => setLap(e.target.value.replace(/[^\d.,:]/g, ""))} />
+                <button type="submit" disabled={busy || !lap} className="btn btn-secondary shrink-0">Enregistrer</button>
+              </div>
+              <p className="hint">Si c&apos;est son meilleur temps, sa carte se met à jour et il reçoit une notification.</p>
             </form>
           )}
 

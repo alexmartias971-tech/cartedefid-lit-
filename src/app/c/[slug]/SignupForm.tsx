@@ -7,10 +7,12 @@ export default function SignupForm({
   action,
   businessName,
   referral,
+  leaderboard,
 }: {
   action: (prev: SignupState, fd: FormData) => Promise<SignupState>;
   businessName: string;
   referral?: string | null;
+  leaderboard?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<SignupState, FormData>(action, {});
 
@@ -64,6 +66,15 @@ export default function SignupForm({
           désactivable à tout moment).
         </span>
       </label>
+      {leaderboard && (
+        <label className="flex gap-3 items-start text-sm">
+          <input type="checkbox" name="leaderboard" className="mt-1 h-5 w-5 shrink-0" />
+          <span>
+            🏆 J&apos;accepte d&apos;apparaître au classement public des meilleurs temps (prénom + initiale du nom). Sinon, je
+            suis affiché « Pilote anonyme ».
+          </span>
+        </label>
+      )}
       <label className="flex gap-3 items-start text-sm">
         <input type="checkbox" name="privacy" required className="mt-1 h-5 w-5 shrink-0" />
         <span>

@@ -4,7 +4,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { saveBusiness, type FormState } from "@/app/admin/actions";
 import { LINE_ICON_LABELS, LINE_ICONS } from "@/lib/visual";
-import { computeCardState, formatEuro, MODE_LABELS, stripProgress, type CardDesign } from "@/lib/card-state";
+import { computeCardState, currentWeekStart, formatEuro, MODE_LABELS, stripProgress, type CardDesign } from "@/lib/card-state";
 import { THEMES } from "@/lib/themes";
 import type { Business, CatalogReward, Program, RewardMode, Tier } from "@/lib/types";
 import CardPreview from "./CardPreview";
@@ -118,6 +118,7 @@ function ImageField(props: {
 const PROGRESS_STYLES: { value: CardDesign["progressStyle"]; title: string; text: string }[] = [
   { value: "glass", title: "Verre dépoli", text: "Une bande en verre flouté avec les icônes (le plus premium)." },
   { value: "minimal", title: "Points fins", text: "Une rangée de petits points discrets en bas." },
+  { value: "track", title: "Circuit néon", text: "Un circuit qui s'illumine à chaque passage (sport, course, défi)." },
   { value: "none", title: "Photo seule", text: "Aucun tampon dessiné : le compteur s'affiche en texte." },
 ];
 
@@ -157,6 +158,12 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
     bonus_start_hour: program?.bonus_start_hour ?? 14,
     bonus_end_hour: program?.bonus_end_hour ?? 17,
     referral_bonus: program?.referral_bonus ?? 0,
+    streak_enabled: program?.streak_enabled ?? false,
+    streak_goal: program?.streak_goal ?? 4,
+    streak_bonus: program?.streak_bonus ?? 1,
+    streak_reminder_dow: program?.streak_reminder_dow ?? 0,
+    streak_reminder_hour: program?.streak_reminder_hour ?? 11,
+    lap_times_enabled: program?.lap_times_enabled ?? false,
   });
   const [collection, setCollection] = useState<string[]>(program?.collection_icons ?? ["iced", "coffee", "matcha", "icecream"]);
   const [sampleFilled, setSampleFilled] = useState(3);
@@ -208,6 +215,12 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
       lifetime_visits: 12,
       lifetime_spent: 180,
       tier_id: null as string | null,
+      streak_count: 3,
+      streak_best: 5,
+      streak_week: currentWeekStart(),
+      best_lap_ms: 38412,
+      lap_rank: 7,
+      lap_rank_total: 48,
     };
     const metric = v.tier_basis === "spend" ? sample.lifetime_spent : sample.lifetime_visits;
     sample.tier_id = [...previewTiers].reverse().find((t) => t.min_value <= metric)?.id ?? null;
@@ -223,6 +236,10 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
         cashback_percent: Number(v.cashback_percent) || 5,
         tiers_enabled: v.tiers_enabled,
         tier_basis: v.tier_basis,
+        streak_enabled: v.streak_enabled,
+        streak_goal: v.streak_goal,
+        lap_times_enabled: v.lap_times_enabled,
+        progress_style: v.progress_style,
       },
       sample,
       previewTiers,
@@ -508,7 +525,7 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
             <div className="space-y-4 rounded-xl border border-gray-200 p-3">
               <div>
                 <span className="label">Les tampons sur la photo</span>
-                <div className="grid sm:grid-cols-3 gap-2">
+                <div className="grid sm:grid-cols-2 gap-2">
                   {PROGRESS_STYLES.map((ps) => (
                     <label key={ps.value} className={`cursor-pointer rounded-xl border-2 p-2 ${v.progress_style === ps.value ? "border-[var(--lagon)] bg-[#eef6f7]" : "border-gray-200"}`}>
                       <input type="radio" className="sr-only" checked={v.progress_style === ps.value} onChange={() => setV({ ...v, progress_style: ps.value })} />
@@ -698,6 +715,47 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
             </div>
             <p className="hint">Ex : × 2 de 14 h à 17 h → le client gagne double pendant les heures calmes (heure de Guadeloupe).</p>
           </div>
+          <div className="rounded-xl bg-[#fff1e6] p-3 space-y-3">
+            <label className="inline-flex items-center gap-2 font-semibold">
+              <input type="checkbox" name="streak_enabled" checked={v.streak_enabled} onChange={(e) => setV({ ...v, streak_enabled: e.target.checked })} />
+              🔥 Série de la semaine : récompenser ceux qui reviennent chaque semaine
+            </label>
+            {v.streak_enabled && (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label htmlFor="streak_goal" className="label text-sm">Semaines d&apos;affilée</label>
+                    <input id="streak_goal" name="streak_goal" type="number" min={2} max={52} className="input" value={v.streak_goal} onChange={set("streak_goal")} />
+                  </div>
+                  <div>
+                    <label htmlFor="streak_bonus" className="label text-sm">Bonus ({v.mode === "stamps" ? "tampons" : v.mode === "points" ? "points" : "€"})</label>
+                    <input id="streak_bonus" name="streak_bonus" type="number" min={0} max={1000} className="input" value={v.streak_bonus} onChange={set("streak_bonus")} />
+                  </div>
+                  <div>
+                    <label htmlFor="streak_reminder_dow" className="label text-sm">Rappel le</label>
+                    <select id="streak_reminder_dow" name="streak_reminder_dow" className="input" value={v.streak_reminder_dow} onChange={set("streak_reminder_dow")}>
+                      {["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"].map((d, i) => <option key={d} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="streak_reminder_hour" className="label text-sm">à</label>
+                    <select id="streak_reminder_hour" name="streak_reminder_hour" className="input" value={v.streak_reminder_hour} onChange={set("streak_reminder_hour")}>
+                      {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h} h</option>)}
+                    </select>
+                  </div>
+                </div>
+                <p className="hint">
+                  Une semaine = du lundi au dimanche. Chaque semaine où le client passe prolonge sa série ; s&apos;il saute une semaine, elle repart à 1.
+                  Tous les {v.streak_goal} semaines d&apos;affilée : +{v.streak_bonus} en bonus. Le jour du rappel, ceux qui ne sont pas encore venus reçoivent « Ta série s&apos;arrête ce soir ! ».
+                  Choisis le dernier jour d&apos;ouverture de la semaine.
+                </p>
+              </>
+            )}
+          </div>
+          <label className="inline-flex items-center gap-2 font-semibold">
+            <input type="checkbox" name="lap_times_enabled" checked={v.lap_times_enabled} onChange={(e) => setV({ ...v, lap_times_enabled: e.target.checked })} />
+            ⏱️ Record + classement (karting, sport…) : le commerçant saisit le meilleur temps, la carte affiche le record et la position (P1, P2…), et les pilotes dépassés sont prévenus
+          </label>
           <div>
             <label htmlFor="referral_bonus" className="label">Parrainage : bonus pour le parrain</label>
             <input id="referral_bonus" name="referral_bonus" type="number" min={0} max={1000} className="input sm:max-w-[160px]" value={v.referral_bonus} onChange={set("referral_bonus")} />

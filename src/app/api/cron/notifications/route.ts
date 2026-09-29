@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runBirthdays, runDueNotifications, runWinback } from "@/lib/notifications";
+import { runBirthdays, runDueNotifications, runStreakReminders, runWinback } from "@/lib/notifications";
 
 export const maxDuration = 300;
 
@@ -16,5 +16,6 @@ export async function GET(request: Request) {
   const sent = await runDueNotifications();
   const winback = await runWinback();
   const birthdays = await runBirthdays();
-  return NextResponse.json({ ok: true, notifications: sent, winback, birthdays });
+  const streaks = await runStreakReminders();
+  return NextResponse.json({ ok: true, notifications: sent, winback, birthdays, streaks });
 }

@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { useMemo } from "react";
 import QRCode from "qrcode";
-import { cardBannerSvg, cardPosterSvg, fieldLabels, type CardDesign, type CardState } from "@/lib/card-state";
+import { cardBannerSvg, cardPosterSvg, fieldLabels, posterFields, type CardDesign, type CardState } from "@/lib/card-state";
 
 /**
  * Aperçu fidèle de la carte dans le Wallet, aux formats officiels :
@@ -95,43 +95,45 @@ export default function CardPreview(p: PreviewProps) {
   }, [p.platform, design, total, filled, uid, photo]);
 
   const fields: { label: string; value: string }[] = [{ label: labels.customer, value: p.customerName }];
-  if (p.secondary) fields.push(d.mode === "stamps" && labels.reward ? { ...p.secondary, label: labels.reward } : p.secondary);
+  if (p.state.lap) fields.push({ label: "RECORD", value: p.state.lap });
+  else if (p.secondary) fields.push(d.mode === "stamps" && labels.reward ? { ...p.secondary, label: labels.reward } : p.secondary);
   if (p.state.tier) fields.push({ label: "NIVEAU", value: p.state.tier.name });
+  if (p.state.streak) fields.push({ label: "SÉRIE", value: `🔥 ${p.state.streak.count} sem.` });
   if (p.couponsCount) fields.push({ label: "OFFRES", value: `${p.couponsCount} disponible${p.couponsCount > 1 ? "s" : ""}` });
 
   if (p.platform === "poster") {
-    const [balanceValue, balanceTotal] = p.state.balanceValue.split("/");
+    // Même disposition que l'iPhone (iOS 27) : mêmes champs que la vraie carte.
+    const { header, primary, footer } = posterFields(p.state, labels, p.customerName);
     return (
       <div className="w-full max-w-[340px]">
         <div className="text-xs font-semibold text-gray-500 mb-1">iPhone · iOS 27 (carte « poster »)</div>
-        <div className="overflow-hidden rounded-[22px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
-          <div className="relative">
-            <Svg html={art} ratio="358 / 448" />
-            <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3.5">
-              {p.logoUrl ? <img src={p.logoUrl} alt="" className="h-[30px] max-w-[126px] object-contain object-left" /> : <span className="text-[17px] font-semibold truncate">{name}</span>}
-              {p.state.tier ? (
-                <Field label="NIVEAU" value={p.state.tier.name} color={d.labelColor} align="right" />
-              ) : (
-                <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
-              )}
+        <div className="relative overflow-hidden rounded-[22px] shadow-xl" style={{ background: bg, color: d.foregroundColor, aspectRatio: "358 / 494" }}>
+          <div className="absolute inset-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: art }} />
+          <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3.5">
+            <div className="flex items-center gap-2 min-w-0">
+              {p.logoUrl && <img src={p.logoUrl} alt="" className="h-[30px] max-w-[126px] object-contain object-left" />}
+              {(d.showLogoText || !p.logoUrl) && <span className="text-[17px] font-semibold truncate drop-shadow">{name}</span>}
             </div>
-            <div className="absolute inset-x-0 bottom-0 px-4 pb-4 space-y-2">
-              <div className="flex items-end justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold tracking-wider" style={{ color: d.labelColor }}>{labels.balance}</div>
-                  <div className="text-[40px] font-semibold leading-none tracking-tight tabular-nums">
-                    {balanceValue}
-                    {balanceTotal && <span className="text-xl font-medium opacity-75">/{balanceTotal}</span>}
-                  </div>
-                </div>
-                <Field label={labels.customer} value={p.customerName} color={d.labelColor} align="right" big />
-              </div>
-              <div className="text-[13px] font-medium leading-snug" style={{ color: d.stampColor }}>{p.state.sentence}</div>
+            <div className="text-right drop-shadow">
+              <div className="text-[10px] font-bold tracking-wider" style={{ color: d.labelColor }}>{header.label}</div>
+              <div className="text-[15px] font-semibold leading-tight">{header.value}</div>
             </div>
           </div>
-          <div className="flex flex-col items-center pb-4 pt-1">
-            <div className="rounded-xl bg-white p-2 leading-none"><QrSvg value={qrValue} size={116} /></div>
-            <div className="mt-1.5 text-[11px] opacity-75">{p.customerName}</div>
+          <div className="absolute inset-x-0 flex justify-center" style={{ top: "47%" }}>
+            <div className="rounded-xl bg-white p-[2.2%] leading-none shadow-lg w-[34%] [&>svg]:w-full [&>svg]:h-auto">
+              <QrSvg value={qrValue} size={112} />
+            </div>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 px-4 pb-3 pt-3 backdrop-blur-md" style={{ background: `linear-gradient(to bottom, transparent, ${bg}cc 35%)` }}>
+            <div className="flex items-end justify-between gap-2">
+              {primary.map((f, i) => (
+                <div key={f.label + i} className={`min-w-0 ${i === primary.length - 1 ? "text-right" : ""}`}>
+                  <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color: d.labelColor }}>{f.label}</div>
+                  <div className={`${primary.length > 3 ? "text-[15px]" : "text-[17px]"} font-semibold leading-tight truncate tabular-nums`}>{f.value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[12px] font-medium leading-snug line-clamp-2" style={{ color: d.stampColor }}>{footer}</div>
           </div>
         </div>
       </div>
@@ -150,7 +152,9 @@ export default function CardPreview(p: PreviewProps) {
           <div className="px-4 pt-3 text-[22px] leading-snug">{d.programName || "Carte de fidélité"}</div>
           <div className="grid grid-cols-2 gap-3 px-4 pt-3">
             <Field label={labels.balance} value={p.state.balanceValue} color={d.foregroundColor} big />
-            {p.state.tier ? (
+            {p.state.rank ? (
+              <Field label="CLASSEMENT" value={`P${p.state.rank.pos} / ${p.state.rank.total}`} color={d.foregroundColor} align="right" big />
+            ) : p.state.tier ? (
               <Field label="NIVEAU" value={p.state.tier.name} color={d.foregroundColor} align="right" big />
             ) : (
               <Field label={labels.customer} value={p.customerName} color={d.foregroundColor} align="right" big />
@@ -175,7 +179,10 @@ export default function CardPreview(p: PreviewProps) {
             <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} />
             {d.showLogoText && <span className="font-semibold text-[15px] truncate">{name}</span>}
           </div>
-          <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
+          <div className="flex gap-4">
+            {p.state.rank && <Field label="CLASSEMENT" value={`P${p.state.rank.pos}`} color={d.labelColor} align="right" />}
+            <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
+          </div>
         </div>
         <Svg html={art} ratio="375 / 144" />
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 pt-3">
