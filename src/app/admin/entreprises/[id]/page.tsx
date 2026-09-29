@@ -6,7 +6,7 @@ import ConfirmButton from "@/components/ConfirmButton";
 import CopyField from "@/components/CopyField";
 import NotificationForm from "@/components/NotificationForm";
 import OfferForm from "@/components/OfferForm";
-import { computeCardState, MODE_LABELS } from "@/lib/card-state";
+import { computeCardState, describeProgram, MODE_LABELS } from "@/lib/card-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import { appUrl } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
@@ -187,6 +187,36 @@ export default async function EntreprisePage({
         Cartes : {byPlatform("apple")} Apple Wallet · {byPlatform("google")} Google Wallet · {byPlatform("web")} carte
         web
       </p>
+
+      {program && (
+        <section className="rounded-2xl bg-[#15262b] text-white p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold tracking-widest text-[#7fd1db]">LA CARTE EN RÉSUMÉ</p>
+              <h2 className="text-xl font-bold">{program.name} · ce que vit le client</h2>
+            </div>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <a href="#carte" className="btn bg-white text-black">✏️ Modifier les règles et le design</a>
+              <a href={signupUrl} target="_blank" rel="noopener" className="btn bg-white/10 text-white">Page d&apos;inscription ↗</a>
+              {program.lap_times_enabled && (
+                <a href={`${appUrl()}/classement/${business.slug}`} target="_blank" rel="noopener" className="btn bg-white/10 text-white">Classement ↗</a>
+              )}
+            </div>
+          </div>
+          <ul className="grid sm:grid-cols-2 gap-3">
+            {describeProgram(program, sortedTiers).map((r) => (
+              <li key={r.title} className="rounded-xl bg-white/5 p-3 text-sm leading-relaxed">
+                <span className="mr-1">{r.icon}</span>
+                <b>{r.title}</b>
+                <span className="block text-white/80">{r.text}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-white/60">
+            Tout se met à jour automatiquement quand le commerçant scanne une carte. <a href="/admin/guide" className="underline">Comprendre comment ça marche →</a>
+          </p>
+        </section>
+      )}
 
       <section className="panel space-y-3">
         <h2 className="text-xl font-bold">Lien d&apos;inscription des clients</h2>

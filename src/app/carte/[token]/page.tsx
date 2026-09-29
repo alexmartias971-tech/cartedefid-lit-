@@ -5,7 +5,7 @@ import CardPreview from "@/components/CardPreview";
 import WalletButtons from "@/components/WalletButtons";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured, isGoogleConfigured } from "@/lib/env";
-import { computeCardState, designFromProgram, formatEuro, photoFor, secondaryField, stripProgress } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, formatEuro, photoFor, secondaryField, stripProgress } from "@/lib/card-state";
 import { appUrl } from "@/lib/env";
 import ShareButton from "@/components/ShareButton";
 
@@ -131,6 +131,18 @@ export default async function CardPage({
           )}
         </div>
       )}
+
+      <details className="panel">
+        <summary className="font-semibold cursor-pointer">❓ Comment ça marche</summary>
+        <ul className="mt-3 space-y-2 text-sm">
+          {describeProgram(program, tiers).map((r) => (
+            <li key={r.title} className="flex gap-2">
+              <span>{r.icon}</span>
+              <span><b>{r.title} :</b> {r.text}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
 
       {program.lap_times_enabled && (
         <a href={`/classement/${business.slug}`} className="btn btn-primary w-full">

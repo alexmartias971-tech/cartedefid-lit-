@@ -4,7 +4,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { saveBusiness, type FormState } from "@/app/admin/actions";
 import { LINE_ICON_LABELS, LINE_ICONS } from "@/lib/visual";
-import { computeCardState, currentWeekStart, formatEuro, MODE_LABELS, stripProgress, type CardDesign } from "@/lib/card-state";
+import { computeCardState, currentWeekStart, formatEuro, stripProgress, type CardDesign } from "@/lib/card-state";
 import { THEMES } from "@/lib/themes";
 import type { Business, CatalogReward, Program, RewardMode, Tier } from "@/lib/types";
 import CardPreview from "./CardPreview";
@@ -167,6 +167,8 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
   });
   const [collection, setCollection] = useState<string[]>(program?.collection_icons ?? ["iced", "coffee", "matcha", "icecream"]);
   const [sampleFilled, setSampleFilled] = useState(3);
+  // Aperçu : niveau choisi ("" = automatique selon l'exemple)
+  const [previewTier, setPreviewTier] = useState("");
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setV({ ...v, [k]: typeof v[k] === "number" ? Number(e.target.value) : e.target.value });
 
@@ -223,7 +225,8 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
       lap_rank_total: 48,
     };
     const metric = v.tier_basis === "spend" ? sample.lifetime_spent : sample.lifetime_visits;
-    sample.tier_id = [...previewTiers].reverse().find((t) => t.min_value <= metric)?.id ?? null;
+    const forced = previewTiers.find((t) => t.id === previewTier);
+    sample.tier_id = forced ? forced.id : ([...previewTiers].reverse().find((t) => t.min_value <= metric)?.id ?? null);
     const previewCatalog: CatalogReward[] = rewardRows
       .filter((r) => r.name && Number(r.cost) > 0)
       .map((r, i) => ({ id: r.key, program_id: "", name: r.name, cost: Number(r.cost), is_active: true, sort: i }));
@@ -257,7 +260,7 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
     const progress = stripProgress(v.mode, cardState, sample, previewCatalog);
     const photo = cardState.tier?.image_url || null;
     return { cardState, secondary, progress, tierPhoto: photo };
-  }, [v, tierRows, rewardRows, sampleFilled]);
+  }, [v, tierRows, rewardRows, sampleFilled, previewTier]);
 
   const design: CardDesign = {
     mode: v.mode,
@@ -380,15 +383,23 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
           </div>
 
           {v.mode === "stamps" && (
-            <div className="grid sm:grid-cols-[160px_1fr] gap-4">
-              <div>
-                <label htmlFor="reward_threshold" className="label">Tampons pour le cadeau *</label>
-                <input id="reward_threshold" name="reward_threshold" type="number" min={2} max={50} required className="input" value={v.reward_threshold} onChange={set("reward_threshold")} />
+            <div className="space-y-2">
+              <div className="grid sm:grid-cols-[200px_1fr] gap-4">
+                <div>
+                  <label htmlFor="reward_threshold" className="label">
+                    {v.progress_style === "track" ? "Secteurs pour boucler le tour *" : "Tampons pour le cadeau *"}
+                  </label>
+                  <input id="reward_threshold" name="reward_threshold" type="number" min={2} max={50} required className="input" value={v.reward_threshold} onChange={set("reward_threshold")} />
+                </div>
+                <div>
+                  <label htmlFor="reward_description" className="label">Récompense *</label>
+                  <input id="reward_description" name="reward_description" required className="input" value={v.reward_description} onChange={set("reward_description")} placeholder="1 pain au chocolat offert" />
+                </div>
               </div>
-              <div>
-                <label htmlFor="reward_description" className="label">Cadeau *</label>
-                <input id="reward_description" name="reward_description" required className="input" value={v.reward_description} onChange={set("reward_description")} placeholder="1 pain au chocolat offert" />
-              </div>
+              <p className="rounded-lg bg-[#eef6f7] px-3 py-2 text-sm">
+                👉 1 passage scanné = 1 {v.progress_style === "track" ? "secteur" : "tampon"}. Après <b>{v.reward_threshold}</b> passages, le client gagne :{" "}
+                <b>{v.reward_description || "…"}</b>. Puis sa carte repart à zéro.
+              </p>
             </div>
           )}
           {v.mode !== "stamps" && (
@@ -793,17 +804,37 @@ export default function BusinessForm({ business, program, tiers = [], catalog = 
         </button>
       </div>
 
-      <div className="space-y-6 lg:sticky lg:top-6 self-start">
-        <p className="text-sm text-gray-600">
-          Exemple d&apos;un client en cours : {MODE_LABELS[v.mode].toLowerCase()}
-          {v.tiers_enabled ? `, 12 passages / ${formatEuro(180)} dépensés` : ""}.
-        </p>
-        {v.mode === "stamps" && (
-          <div>
-            <label htmlFor="sample_filled" className="label text-sm">Voir la carte avec {Math.min(sampleFilled, v.reward_threshold)} tampon(s)</label>
-            <input id="sample_filled" type="range" min={0} max={v.reward_threshold} value={Math.min(sampleFilled, v.reward_threshold)} onChange={(e) => setSampleFilled(Number(e.target.value))} className="w-full" />
-          </div>
-        )}
+      <div className="space-y-5 lg:sticky lg:top-6 self-start">
+        <div className="rounded-2xl bg-[#15262b] text-white p-4 space-y-3">
+          <p className="font-semibold">👀 Aperçu en direct</p>
+          <p className="text-xs text-white/70">C&apos;est exactement ce que le client verra. Change les réglages ci-dessous pour tester.</p>
+          {v.mode === "stamps" && (
+            <div>
+              <label htmlFor="sample_filled" className="text-xs font-semibold">
+                {v.progress_style === "track" ? "Secteurs allumés" : "Tampons"} : {Math.min(sampleFilled, v.reward_threshold)} / {v.reward_threshold}
+              </label>
+              <input id="sample_filled" type="range" min={0} max={v.reward_threshold} value={Math.min(sampleFilled, v.reward_threshold)} onChange={(e) => setSampleFilled(Number(e.target.value))} className="w-full accent-[#FF7A00]" />
+            </div>
+          )}
+          {v.tiers_enabled && tierRows.some((t) => t.name) && (
+            <div>
+              <span className="text-xs font-semibold">Voir la carte au niveau :</span>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setPreviewTier("")}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${previewTier === "" ? "bg-white text-black" : "bg-white/10"}`}>
+                  Auto
+                </button>
+                {tierRows.filter((t) => t.name).map((t) => (
+                  <button key={t.key} type="button" onClick={() => setPreviewTier(t.key)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${previewTier === t.key ? "bg-white text-black" : "bg-white/10"}`}>
+                    {t.name}{t.image ? " 📷" : ""}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-white/60">📷 = ce niveau a sa propre photo. Sinon la photo principale est utilisée.</p>
+            </div>
+          )}
+        </div>
         {(["poster", "apple", "google"] as const).map((platform) => (
           <CardPreview
             key={platform}

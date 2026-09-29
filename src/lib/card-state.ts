@@ -173,21 +173,25 @@ function computeBaseState(
   const filled = Math.min(card.stamps_count, threshold);
   const left = threshold - card.stamps_count;
   let sentence = `Merci pour ta visite ! ${filled}/${threshold} tampons.`;
-  if (card.stamps_count >= threshold) sentence = `🎁 Cadeau débloqué : ${program.reward_description} ! Montre ta carte en caisse.`;
+  const track = program.progress_style === "track";
+  if (card.stamps_count >= threshold)
+    sentence = track
+      ? `🏆 Tour bouclé ! ${program.reward_description} : montre ta carte en caisse.`
+      : `🎁 Cadeau débloqué : ${program.reward_description} ! Montre ta carte en caisse.`;
   else if (card.stamps_count === 0)
     sentence =
-      program.progress_style === "track"
-        ? `${threshold} secteurs = 1 tour complet = ${program.reward_description}.`
+      track
+        ? `🏁 1 session = 1 secteur. Les ${threshold} secteurs = 1 tour = ${program.reward_description}.`
         : `${threshold} tampons = ${program.reward_description}.`;
-  else if (program.progress_style === "track")
+  else if (track)
     sentence =
       left === 1
-        ? `Dernier secteur avant la ligne d'arrivée : ${program.reward_description} !`
-        : `Plus que ${left} secteurs pour boucler le tour : ${program.reward_description}.`;
+        ? `🏁 Dernier secteur ! Ta prochaine session boucle le tour = ${program.reward_description}.`
+        : `🏁 1 session = 1 secteur · encore ${left} pour boucler le tour = ${program.reward_description}.`;
   else if (left === 1) sentence = `Plus qu'un passage avant ton cadeau : ${program.reward_description} !`;
   else sentence = `Plus que ${left} passages avant ton cadeau : ${program.reward_description}.`;
   return {
-    balanceLabel: "TAMPONS",
+    balanceLabel: track ? "SECTEURS" : "TAMPONS",
     balanceValue: `${filled}/${threshold}`,
     stamps: { filled, total: threshold },
     sentence,
@@ -477,4 +481,72 @@ export function posterFields(
   const tierHidden = state.tier && header.key !== "ptier" && !shown.some((f) => f.key === "ptier2");
   const footer = tierHidden ? `${state.tier!.name} · ${state.sentence}` : state.sentence;
   return { header, primary, footer };
+}
+
+/**
+ * Les règles de la carte en phrases simples (pour le tableau de bord, le guide et le dos de la carte).
+ */
+export function describeProgram(
+  program: Pick<
+    Program,
+    | "mode" | "reward_threshold" | "reward_description" | "points_per_euro" | "cashback_percent" | "tiers_enabled" | "tier_basis"
+    | "progress_style" | "max_stamps_per_day" | "signup_bonus" | "streak_enabled" | "streak_goal" | "streak_bonus"
+    | "streak_reminder_dow" | "streak_reminder_hour" | "lap_times_enabled" | "referral_bonus" | "bonus_multiplier"
+    | "bonus_start_hour" | "bonus_end_hour" | "welcome_offer" | "birthday_offer"
+  >,
+  tiers: Pick<Tier, "name" | "min_value" | "perk">[] = [],
+): { icon: string; title: string; text: string }[] {
+  const days = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+  const unit = program.mode === "stamps" ? (program.progress_style === "track" ? "secteur" : "tampon") : program.mode === "points" ? "point" : "€";
+  const out: { icon: string; title: string; text: string }[] = [];
+  if (program.mode === "stamps") {
+    out.push(
+      program.progress_style === "track"
+        ? {
+            icon: "🏁",
+            title: "Progression",
+            text: `Chaque passage scanné allume 1 secteur du circuit. ${program.reward_threshold} secteurs = 1 tour bouclé = ${program.reward_description}. Puis un nouveau tour commence.`,
+          }
+        : { icon: "🎟️", title: "Progression", text: `Chaque passage scanné = 1 tampon. ${program.reward_threshold} tampons = ${program.reward_description}.` },
+    );
+    out.push({ icon: "🛡️", title: "Anti-triche", text: `${program.max_stamps_per_day} ${unit}(s) maximum par jour et par client, ajoutés uniquement par le commerçant.` });
+  } else if (program.mode === "points") {
+    out.push({ icon: "⭐", title: "Progression", text: `${Number(program.points_per_euro)} point(s) par euro dépensé, échangeables contre les cadeaux du catalogue.` });
+  } else {
+    out.push({ icon: "💶", title: "Progression", text: `${Number(program.cashback_percent)} % de chaque achat crédité sur la cagnotte du client.` });
+  }
+  if (program.signup_bonus > 0 && program.mode !== "cashback") {
+    out.push({ icon: "🎁", title: "Départ", text: `${program.signup_bonus} ${unit}(s) offert(s) à l'inscription : la carte ne démarre jamais vide.` });
+  }
+  if (program.tiers_enabled && tiers.length > 0) {
+    const sorted = [...tiers].sort((a, b) => Number(a.min_value) - Number(b.min_value));
+    out.push({
+      icon: "🏆",
+      title: "Niveaux",
+      text: sorted
+        .map((t) => `${t.name} dès ${program.tier_basis === "spend" ? formatEuro(Number(t.min_value)) + " dépensés" : `${Number(t.min_value)} passage(s)`}${t.perk ? ` (${t.perk})` : ""}`)
+        .join(" → ") + ". Le niveau se met à jour tout seul après chaque passage.",
+    });
+  }
+  if (program.streak_enabled) {
+    out.push({
+      icon: "🔥",
+      title: "Série",
+      text: `Venir au moins une fois par semaine (lundi → dimanche) prolonge la série. Toutes les ${program.streak_goal} semaines d'affilée : +${program.streak_bonus} ${unit}(s). Rappel le ${days[program.streak_reminder_dow]} à ${program.streak_reminder_hour} h pour ceux qui ne sont pas encore venus.`,
+    });
+  }
+  if (program.lap_times_enabled) {
+    out.push({
+      icon: "⏱️",
+      title: "Record et classement",
+      text: "Après la session, le commerçant tape le meilleur tour du client dans le scanner. S'il est battu, le record et la position (P1, P2…) se mettent à jour sur la carte ; les pilotes dépassés sont prévenus.",
+    });
+  }
+  if (program.referral_bonus > 0) out.push({ icon: "🤝", title: "Parrainage", text: `+${program.referral_bonus} ${unit}(s) pour le parrain à la 1re visite de son ami.` });
+  if (program.bonus_multiplier > 1 && program.bonus_start_hour != null) {
+    out.push({ icon: "⚡", title: "Heures boostées", text: `× ${program.bonus_multiplier} de ${program.bonus_start_hour} h à ${program.bonus_end_hour} h.` });
+  }
+  if (program.welcome_offer) out.push({ icon: "👋", title: "Bienvenue", text: program.welcome_offer });
+  if (program.birthday_offer) out.push({ icon: "🎂", title: "Anniversaire", text: program.birthday_offer });
+  return out;
 }

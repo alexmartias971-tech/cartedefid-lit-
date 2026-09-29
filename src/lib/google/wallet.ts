@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, designFromProgram, fieldLabels, streakSentence } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, fieldLabels, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -108,7 +108,11 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
       body: catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n"),
     });
   }
-  textModulesData.push({ id: "rule", header: "Règle", body: state.rule });
+  textModulesData.push({
+    id: "howto",
+    header: "Comment ça marche",
+    body: describeProgram(program, tiers).map((r) => `${r.icon} ${r.title} : ${r.text}`).join("\n"),
+  });
   if (card.last_message) textModulesData.push({ id: "message", header: `Message de ${business.name}`, body: card.last_message });
   if (program.back_text) textModulesData.push({ id: "info", header: "Informations", body: program.back_text });
   const shareUrl = `${appUrl()}/c/${business.slug}?p=${card.referral_code}`;

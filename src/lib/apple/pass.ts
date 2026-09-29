@@ -1,7 +1,7 @@
 import "server-only";
 import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, designFromProgram, fieldLabels, posterFields, streakSentence } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
 import { primaryLogoPng, squareLogoPng, wideLogoPng } from "@/lib/logo";
 import { renderCardPoster, renderCardStrip } from "@/lib/strip";
@@ -145,6 +145,11 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   }
 
   // Dos de la carte. "changeMessage" = le texte qui s'affiche en notification quand la valeur change.
+  store.backFields.push({
+    key: "howto",
+    label: "Comment ça marche",
+    value: describeProgram(program, tiers).map((r) => `${r.icon} ${r.title} : ${r.text}`).join("\n\n"),
+  });
   if (streakText) store.backFields.push({ key: "streakinfo", label: "Ta série", value: `${streakText}\nMeilleure série : ${state.streak?.best ?? 0} semaine(s).` });
   store.backFields.push(
     { key: "status", label: "Ta carte", value: state.sentence, changeMessage: "%@" },
