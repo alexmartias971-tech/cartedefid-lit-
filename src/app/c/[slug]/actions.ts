@@ -5,7 +5,7 @@ import { normalizePhone } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type SignupState = { error?: string };
-const POLICY_VERSION = "v1";
+const POLICY_VERSION = "v2"; // v2 (4 oct. 2026) : textes des cases et page confidentialité complétée
 
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {
@@ -36,7 +36,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "L'email ne semble pas valide." };
   if (phone && phone.replace(/\D/g, "").length < 9) return { error: "Le téléphone ne semble pas valide." };
   if (birthDate && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return { error: "Date de naissance invalide." };
-  if (!privacy) return { error: "Tu dois accepter la politique de confidentialité pour créer ta carte." };
+  if (!privacy) return { error: "Coche la case pour confirmer que tu as lu comment tes données sont utilisées." };
 
   const supabase = createAdminClient();
   const { data: business } = await supabase

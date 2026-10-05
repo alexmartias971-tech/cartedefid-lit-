@@ -62,8 +62,8 @@ export default function SignupForm({
       <label className="flex gap-3 items-start text-sm">
         <input type="checkbox" name="marketing" className="mt-1 h-5 w-5 shrink-0" />
         <span>
-          J&apos;accepte de recevoir les offres de {businessName} par notification sur ma carte (2 maximum par semaine,
-          désactivable à tout moment).
+          J&apos;accepte de recevoir les offres de {businessName} par notification sur ma carte. Je peux arrêter à tout
+          moment.
         </span>
       </label>
       {leaderboard && (
@@ -78,9 +78,9 @@ export default function SignupForm({
       <label className="flex gap-3 items-start text-sm">
         <input type="checkbox" name="privacy" required className="mt-1 h-5 w-5 shrink-0" />
         <span>
-          J&apos;accepte la{" "}
+          J&apos;ai lu{" "}
           <a href="/confidentialite" target="_blank" className="underline">
-            politique de confidentialité
+            comment mes données sont utilisées
           </a>{" "}
           *
         </span>
