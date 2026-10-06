@@ -66,6 +66,8 @@ export type Program = {
   streak_reminder_dow: number;
   streak_reminder_hour: number;
   lap_times_enabled: boolean;
+  /** Disposition de l'éditeur visuel (zones, textes et stickers). Absente avant le script 10. */
+  card_layout?: unknown;
   created_at: string;
   updated_at: string;
 };

@@ -5,7 +5,7 @@ import CardPreview from "@/components/CardPreview";
 import WalletButtons from "@/components/WalletButtons";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured, isGoogleConfigured } from "@/lib/env";
-import { computeCardState, describeProgram, designFromProgram, formatEuro, photoFor, secondaryField, stripProgress } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, formatEuro, photoFor, resolveSlots, secondaryField, stripProgress } from "@/lib/card-state";
 import { appUrl } from "@/lib/env";
 import ShareButton from "@/components/ShareButton";
 
@@ -28,6 +28,20 @@ export default async function CardPage({
   if (!bundle) notFound();
   const { card, customer, program, business, tiers, catalog, coupons } = bundle;
   const state = computeCardState(program, card, tiers, catalog);
+  const design = designFromProgram(program);
+  // Zones choisies dans l'éditeur visuel (null = affichage automatique)
+  const nextReward =
+    program.mode === "points"
+      ? ([...catalog].filter((r) => r.is_active).sort((a, b) => a.cost - b.cost).find((r) => r.cost > card.points_balance) ?? null)
+      : null;
+  const slots = resolveSlots(design, state, {
+    customerName: customer.first_name,
+    mode: program.mode,
+    rewardDescription: program.reward_description,
+    cashbackPercent: Number(program.cashback_percent),
+    nextReward: nextReward ? { cost: nextReward.cost, name: nextReward.name } : null,
+    coupons: coupons.length,
+  });
 
   const ua = (await headers()).get("user-agent") ?? "";
   const isIOS = /iPhone|iPad|iPod/i.test(ua);
@@ -58,8 +72,9 @@ export default async function CardPage({
           businessName={business.name}
           logoUrl={business.logo_url}
           customerName={customer.first_name}
-          design={designFromProgram(program)}
+          design={design}
           state={state}
+          slots={slots}
           secondary={secondaryField(program, card, catalog)}
           couponsCount={coupons.length}
           progress={stripProgress(program.mode, state, card, catalog)}

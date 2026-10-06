@@ -1,7 +1,7 @@
 import "server-only";
 import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, streakSentence } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
 import { primaryLogoPng, squareLogoPng, wideLogoPng } from "@/lib/logo";
 import { renderCardPoster, renderCardStrip } from "@/lib/strip";
@@ -100,49 +100,71 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
 
   const store = new PassType("storeCard");
 
-  // Recto de la carte (la disposition est imposée par Apple : en-tête, bannière, 2 lignes de champs)
-  store.headerFields.push({
-    key: "balance",
-    label: labels.balance,
-    value: state.balanceValue,
-    textAlignment: "PKTextAlignmentRight",
+  // Zones choisies dans l'éditeur visuel (sinon : disposition automatique d'avant)
+  const nextReward =
+    program.mode === "points"
+      ? ([...catalog].filter((r) => r.is_active).sort((a, b) => a.cost - b.cost).find((r) => r.cost > card.points_balance) ?? null)
+      : null;
+  const slots = resolveSlots(design, state, {
+    customerName: customer.first_name,
+    mode: program.mode,
+    rewardDescription: program.reward_description,
+    cashbackPercent: Number(program.cashback_percent),
+    nextReward: nextReward ? { cost: nextReward.cost, name: nextReward.name } : null,
+    coupons: coupons.length,
+    rankAlerts: customer.marketing_optin,
   });
-  // Le solde s'affiche en grand sur la bannière quand il n'y a pas de cases dessinées
   const drawsCells =
     program.mode !== "cashback" && !["none", "fill"].includes(design.progressStyle) && (program.mode === "stamps" || design.progressStyle !== "grid");
-  if (!drawsCells) store.primaryFields.push({ key: "big", label: labels.balance, value: state.balanceValue });
-  store.secondaryFields.push({ key: "customer", label: labels.customer, value: customer.first_name });
+
+  if (slots) {
+    if (slots.top) store.headerFields.push({ ...slots.top, textAlignment: "PKTextAlignmentRight" });
+    if (!drawsCells) store.primaryFields.push({ key: "big", label: labels.balance, value: state.balanceValue });
+    slots.bottom.slice(0, 2).forEach((f) => f && store.secondaryFields.push(f));
+    slots.bottom.slice(2, 4).forEach((f) => f && store.auxiliaryFields.push(f));
+  } else {
+    // Recto de la carte (la disposition est imposée par Apple : en-tête, bannière, 2 lignes de champs)
+    store.headerFields.push({
+      key: "balance",
+      label: labels.balance,
+      value: state.balanceValue,
+      textAlignment: "PKTextAlignmentRight",
+    });
+    // Le solde s'affiche en grand sur la bannière quand il n'y a pas de cases dessinées
+    if (!drawsCells) store.primaryFields.push({ key: "big", label: labels.balance, value: state.balanceValue });
+    store.secondaryFields.push({ key: "customer", label: labels.customer, value: customer.first_name });
+    if (state.lap) {
+      store.secondaryFields.push({ key: "lap", label: "RECORD", value: state.lap, changeMessage: "⏱️ Nouveau record : %@ !" });
+    } else if (program.mode === "stamps") {
+      store.secondaryFields.push({ key: "reward", label: labels.reward ?? "CADEAU", value: program.reward_description });
+    } else if (program.mode === "points") {
+      const next = catalog.find((r) => r.is_active && r.cost > card.points_balance);
+      if (next) store.secondaryFields.push({ key: "next", label: `À ${next.cost} PTS`, value: next.name });
+    } else {
+      store.secondaryFields.push({ key: "rate", label: "CASHBACK", value: `${Number(program.cashback_percent)} %` });
+    }
+    if (state.tier) store.auxiliaryFields.push({ key: "tier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" });
+    if (state.rank) {
+      store.headerFields.unshift({
+        key: "rank",
+        label: "CLASSEMENT",
+        value: `P${state.rank.pos}`,
+        ...(customer.marketing_optin ? { changeMessage: "Classement : %@" } : {}),
+      });
+    }
+    if (state.streak) {
+      store.auxiliaryFields.push({ key: "streak", label: "SÉRIE", value: `🔥 ${state.streak.count} sem.`, textAlignment: "PKTextAlignmentRight" });
+    }
+    if (coupons.length > 0) {
+      store.auxiliaryFields.push({
+        key: "offers",
+        label: "OFFRES",
+        value: `${coupons.length} disponible${coupons.length > 1 ? "s" : ""}`,
+      });
+    }
+  }
   const unit = program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€";
   const streakText = streakSentence(state, program.streak_bonus, unit);
-  if (state.lap) {
-    store.secondaryFields.push({ key: "lap", label: "RECORD", value: state.lap, changeMessage: "⏱️ Nouveau record : %@ !" });
-  } else if (program.mode === "stamps") {
-    store.secondaryFields.push({ key: "reward", label: labels.reward ?? "CADEAU", value: program.reward_description });
-  } else if (program.mode === "points") {
-    const next = catalog.find((r) => r.is_active && r.cost > card.points_balance);
-    if (next) store.secondaryFields.push({ key: "next", label: `À ${next.cost} PTS`, value: next.name });
-  } else {
-    store.secondaryFields.push({ key: "rate", label: "CASHBACK", value: `${Number(program.cashback_percent)} %` });
-  }
-  if (state.tier) store.auxiliaryFields.push({ key: "tier", label: "NIVEAU", value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" });
-  if (state.rank) {
-    store.headerFields.unshift({
-      key: "rank",
-      label: "CLASSEMENT",
-      value: `P${state.rank.pos}`,
-      ...(customer.marketing_optin ? { changeMessage: "Classement : %@" } : {}),
-    });
-  }
-  if (state.streak) {
-    store.auxiliaryFields.push({ key: "streak", label: "SÉRIE", value: `🔥 ${state.streak.count} sem.`, textAlignment: "PKTextAlignmentRight" });
-  }
-  if (coupons.length > 0) {
-    store.auxiliaryFields.push({
-      key: "offers",
-      label: "OFFRES",
-      value: `${coupons.length} disponible${coupons.length > 1 ? "s" : ""}`,
-    });
-  }
 
   // Dos de la carte. "changeMessage" = le texte qui s'affiche en notification quand la valeur change.
   store.backFields.push({
@@ -238,14 +260,25 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   // iOS 27 et plus : carte « poster » (photo plein format). Les iPhone plus anciens gardent la carte classique.
   const poster = new PassType("posterGeneric");
   // Disposition Apple iOS 27 : en-tête en haut à droite, QR code au milieu, champs en bas, 1 ligne de pied.
-  const pf = posterFields(state, labels, customer.first_name);
-  // L'alerte « classement » seulement pour les clients qui acceptent les messages
-  const header = pf.header.key === "prank" && !customer.marketing_optin ? { ...pf.header, changeMessage: undefined } : pf.header;
-  poster.headerFields.push({ ...header, textAlignment: "PKTextAlignmentRight" });
-  pf.primary.forEach((f, i) =>
-    poster.primaryFields.push(i === pf.primary.length - 1 ? { ...f, textAlignment: "PKTextAlignmentRight" } : f),
-  );
-  poster.footerFields.push({ key: "pstatus", value: pf.footer, changeMessage: "%@" });
+  if (slots) {
+    if (slots.top) poster.headerFields.push({ ...slots.top, key: `p${slots.top.key}`, textAlignment: "PKTextAlignmentRight" });
+    const primary = slots.bottom.filter((f): f is NonNullable<typeof f> => f !== null);
+    primary.forEach((f, i) =>
+      poster.primaryFields.push(
+        i === primary.length - 1 && i > 0 ? { ...f, key: `p${f.key}`, textAlignment: "PKTextAlignmentRight" } : { ...f, key: `p${f.key}` },
+      ),
+    );
+    if (slots.footer) poster.footerFields.push({ key: "pstatus", value: slots.footer, changeMessage: "%@" });
+  } else {
+    const pf = posterFields(state, labels, customer.first_name);
+    // L'alerte « classement » seulement pour les clients qui acceptent les messages
+    const header = pf.header.key === "prank" && !customer.marketing_optin ? { ...pf.header, changeMessage: undefined } : pf.header;
+    poster.headerFields.push({ ...header, textAlignment: "PKTextAlignmentRight" });
+    pf.primary.forEach((f, i) =>
+      poster.primaryFields.push(i === pf.primary.length - 1 ? { ...f, textAlignment: "PKTextAlignmentRight" } : f),
+    );
+    poster.footerFields.push({ key: "pstatus", value: pf.footer, changeMessage: "%@" });
+  }
   poster.backFields.push(...store.backFields.map((f) => ({ ...f, key: `p-${f.key}` })));
 
   pass.types.push(poster, store);

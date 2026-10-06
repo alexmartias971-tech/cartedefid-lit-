@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, describeProgram, designFromProgram, fieldLabels, streakSentence } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, fieldLabels, resolveSlots, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -85,7 +85,23 @@ export async function upsertGoogleClass(program: Program, business: Business) {
 
 function objectBody({ card, customer, program, business, tiers, catalog, coupons }: CardBundle) {
   const state = computeCardState(program, card, tiers, catalog);
-  const labels = fieldLabels(designFromProgram(program), state);
+  const design = designFromProgram(program);
+  const labels = fieldLabels(design, state);
+  // Zones choisies dans l'éditeur visuel : à gauche la zone « en haut », à droite le 1er champ du bas
+  const nextReward =
+    program.mode === "points"
+      ? ([...catalog].filter((r) => r.is_active).sort((a, b) => a.cost - b.cost).find((r) => r.cost > card.points_balance) ?? null)
+      : null;
+  const slots = resolveSlots(design, state, {
+    customerName: customer.first_name,
+    mode: program.mode,
+    rewardDescription: program.reward_description,
+    cashbackPercent: Number(program.cashback_percent),
+    nextReward: nextReward ? { cost: nextReward.cost, name: nextReward.name } : null,
+    coupons: coupons.length,
+  });
+  const left = slots ? (slots.top ?? { label: labels.balance, value: state.balanceValue }) : null;
+  const right = slots ? (slots.bottom.find((f) => f !== null) ?? null) : null;
   const textModulesData = [{ id: "status", header: "Ta carte", body: state.sentence }];
   const streakText = streakSentence(state, program.streak_bonus, program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€");
   if (streakText) textModulesData.unshift({ id: "streak", header: `Série : ${state.streak?.count ?? 0} semaine(s)`, body: streakText });
@@ -136,8 +152,14 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     state: "ACTIVE",
     accountId: card.serial_number,
     accountName: customer.first_name,
-    loyaltyPoints: { label: labels.balance, balance: { string: state.balanceValue } },
-    ...(state.rank
+    loyaltyPoints: left
+      ? { label: left.label, balance: { string: left.value } }
+      : { label: labels.balance, balance: { string: state.balanceValue } },
+    ...(slots
+      ? right
+        ? { secondaryLoyaltyPoints: { label: right.label, balance: { string: right.value } } }
+        : {}
+      : state.rank
       ? { secondaryLoyaltyPoints: { label: "Classement", balance: { string: `P${state.rank.pos} / ${state.rank.total}` } } }
       : state.lap
       ? { secondaryLoyaltyPoints: { label: "Record", balance: { string: state.lap } } }

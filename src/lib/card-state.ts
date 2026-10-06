@@ -4,7 +4,8 @@
  * toutes les versions de la carte disent exactement la même chose.
  */
 import { buildStripSvg, STRIP_H, STRIP_W, type StripOptions } from "@/lib/art";
-import { buildBannerSvg, buildPosterSvg, FORMATS, type BannerFormat, type BannerOptions, type BannerStyle } from "@/lib/visual";
+import { buildBannerSvg, buildPosterSvg, FORMATS, LINE_ICONS, layersSvg, type BannerFormat, type BannerOptions, type BannerStyle } from "@/lib/visual";
+import { parseLayout, type ArtFormat, type CardLayout, type FieldSlot, type SlotConfig } from "@/lib/layout";
 import type { CatalogReward, Coupon, Program, RewardMode, Tier } from "@/lib/types";
 
 export const MODE_LABELS: Record<RewardMode, string> = {
@@ -256,7 +257,16 @@ export type CardDesign = {
   labelBalance: string | null;
   labelCustomer: string | null;
   labelReward: string | null;
+  /** Disposition choisie dans l'éditeur visuel (zones, textes et stickers sur la photo). */
+  layout: CardLayout;
 };
+
+const ICON_IDS = new Set(Object.keys(LINE_ICONS));
+
+/** Lit la disposition enregistrée d'un programme (vide si la colonne n'existe pas encore). */
+export function layoutOf(program: Pick<Program, "card_layout">): CardLayout {
+  return parseLayout(program.card_layout ?? null, ICON_IDS);
+}
 
 export function designFromProgram(program: Program): CardDesign {
   return {
@@ -283,6 +293,7 @@ export function designFromProgram(program: Program): CardDesign {
     labelBalance: program.label_balance,
     labelCustomer: program.label_customer,
     labelReward: program.label_reward,
+    layout: layoutOf(program),
   };
 }
 
@@ -364,6 +375,7 @@ export function bannerOptions(
   design: CardDesign,
   progress: Progress,
   photo?: string | null,
+  format: ArtFormat = "apple",
 ): BannerOptions {
   const style: BannerStyle =
     design.mode === "cashback"
@@ -387,6 +399,8 @@ export function bannerOptions(
       : [design.iconPreset],
     rewardOnLast: design.rewardOnLast,
     streak: progress.streak ?? null,
+    layers: design.layout?.layers ?? [],
+    stampsY: design.layout?.stamps?.[format] ?? null,
   };
 }
 
@@ -404,12 +418,12 @@ export function cardBannerSvg(
   hrefs?: { decor?: string | null; icon?: string | null; iconEmpty?: string | null },
 ): string {
   if (isPhotoStyle(design.progressStyle) || design.mode === "cashback" || design.progressStyle === "none") {
-    return buildBannerSvg(bannerOptions(design, progress, hrefs?.decor), format, width, height, uid);
+    return buildBannerSvg(bannerOptions(design, progress, hrefs?.decor, format), format, width, height, uid);
   }
   const { w, h } = FORMATS[format];
   const legacy = buildStripSvg(stripOptions(design, progress, hrefs), STRIP_W, STRIP_H, uid);
   const inner = legacy.replace(/^<svg /, `<svg x="0" y="${(h - (w * STRIP_H) / STRIP_W) / 2}" `).replace(/width="\d+" height="\d+"/, `width="${w}" height="${(w * STRIP_H) / STRIP_W}"`);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${design.backgroundColor}"/>${inner}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${design.backgroundColor}"/>${inner}${layersSvg(design.layout?.layers, format, w, h)}</svg>`;
 }
 
 /** Visuel plein format de la carte poster iOS 27 (photo du niveau si elle existe). */
@@ -421,7 +435,7 @@ export function cardPosterSvg(
   photo?: string | null,
   progress?: Progress,
 ): string {
-  const base = bannerOptions(design, progress ?? { total: 0, filled: 0 }, photo !== undefined ? photo : design.stripImageUrl);
+  const base = bannerOptions(design, progress ?? { total: 0, filled: 0 }, photo !== undefined ? photo : design.stripImageUrl, "poster");
   return buildPosterSvg(progress ? base : { ...base, style: "none" }, width, height, uid);
 }
 
@@ -481,6 +495,88 @@ export function posterFields(
   const tierHidden = state.tier && header.key !== "ptier" && !shown.some((f) => f.key === "ptier2");
   const footer = tierHidden ? `${state.tier!.name} · ${state.sentence}` : state.sentence;
   return { header, primary, footer };
+}
+
+/** Ce qu'il faut pour remplir les zones choisies dans l'éditeur. */
+export type SlotContext = {
+  customerName: string;
+  mode: RewardMode;
+  rewardDescription: string;
+  cashbackPercent: number;
+  /** Prochain cadeau du catalogue (mode points). */
+  nextReward: { cost: number; name: string } | null;
+  coupons: number;
+  /** L'alerte « classement » seulement pour les clients qui acceptent les messages. */
+  rankAlerts?: boolean;
+};
+
+export type ResolvedSlots = {
+  top: Field | null;
+  /** Les 4 champs du bas, dans l'ordre (null = zone vide ou information indisponible). */
+  bottom: (Field | null)[];
+  footer: string | null;
+};
+
+/** Valeur d'une zone (null si l'information n'existe pas pour ce client, ex : pas de niveau). */
+export function slotField(
+  key: string,
+  cfg: SlotConfig | undefined,
+  state: CardState,
+  labels: { balance: string; customer: string; reward: string | null },
+  ctx: SlotContext,
+): Field | null {
+  if (!cfg) return null;
+  const title = (fallback: string) => (cfg.label ? cfg.label.toUpperCase() : fallback);
+  const k = `z${key}`;
+  switch (cfg.src) {
+    case "balance":
+      return { key: k, label: title(labels.balance), value: state.balanceValue };
+    case "customer":
+      return { key: k, label: title(labels.customer), value: ctx.customerName };
+    case "reward":
+      if (ctx.mode === "stamps") return { key: k, label: title(labels.reward ?? "CADEAU"), value: ctx.rewardDescription };
+      if (ctx.mode === "cashback") return { key: k, label: title("CASHBACK"), value: `${Number(ctx.cashbackPercent)} %` };
+      return ctx.nextReward ? { key: k, label: title(`À ${ctx.nextReward.cost} PTS`), value: ctx.nextReward.name } : null;
+    case "tier":
+      return state.tier ? { key: k, label: title("NIVEAU"), value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" } : null;
+    case "streak":
+      return state.streak ? { key: k, label: title("SÉRIE"), value: `🔥 ${state.streak.count} sem.` } : null;
+    case "lap":
+      return state.lap ? { key: k, label: title("RECORD"), value: state.lap, changeMessage: "⏱️ Nouveau record : %@ !" } : null;
+    case "rank":
+      return state.rank
+        ? {
+            key: k,
+            label: title("CLASSEMENT"),
+            value: `P${state.rank.pos} / ${state.rank.total}`,
+            ...(ctx.rankAlerts !== false ? { changeMessage: "Classement : %@" } : {}),
+          }
+        : null;
+    case "offers":
+      return ctx.coupons > 0 ? { key: k, label: title("OFFRES"), value: `${ctx.coupons} disponible${ctx.coupons > 1 ? "s" : ""}` } : null;
+    case "custom":
+      return cfg.value ? { key: k, label: (cfg.label ?? "").toUpperCase(), value: cfg.value } : null;
+    default:
+      return null;
+  }
+}
+
+/** Remplit toutes les zones d'une carte selon la disposition de l'éditeur. null = disposition automatique (d'avant). */
+export function resolveSlots(
+  design: Pick<CardDesign, "layout" | "labelBalance" | "labelCustomer" | "labelReward">,
+  state: CardState,
+  ctx: SlotContext,
+): ResolvedSlots | null {
+  const slots = design.layout?.slots;
+  if (!slots) return null;
+  const labels = fieldLabels(design, state);
+  const get = (key: FieldSlot) => slotField(key, slots[key], state, labels, ctx);
+  const foot = slots.foot ?? { src: "sentence" as const };
+  return {
+    top: get("top"),
+    bottom: [get("b1"), get("b2"), get("b3"), get("b4")],
+    footer: foot.src === "sentence" ? state.sentence : foot.src === "custom" ? foot.value || null : null,
+  };
 }
 
 /**

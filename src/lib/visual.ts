@@ -10,6 +10,8 @@
  * Icônes : Lucide (licence ISC, https://lucide.dev) — traits fins, style « app ».
  */
 
+import { layerPos, type ArtFormat, type ArtLayer } from "@/lib/layout";
+
 export const FORMATS = {
   apple: { w: 375, h: 144 },
   google: { w: 375, h: 122 },
@@ -89,6 +91,10 @@ export type BannerOptions = {
   rewardOnLast: boolean;
   /** Série de semaines d'affilée (style « piste ») : flammes allumées / objectif. */
   streak?: { count: number; goal: number } | null;
+  /** Textes et stickers posés sur la photo dans l'éditeur. */
+  layers?: ArtLayer[];
+  /** Hauteur de la bande de tampons (0 = en haut, 1 = en bas). null = place par défaut. */
+  stampsY?: number | null;
 };
 
 function esc(v: string) {
@@ -133,7 +139,10 @@ function glassBand(o: BannerOptions, W: number, H: number, top?: number): string
   const bandW = perRow * cell + 18;
   const bandH = rows * cell + 12;
   const bx = (W - bandW) / 2;
-  const by = top ?? H - bandH - (H > 130 ? 12 : 9);
+  const by =
+    o.stampsY != null
+      ? Math.min(H - bandH - 2, Math.max(2, o.stampsY * H - bandH / 2))
+      : (top ?? H - bandH - (H > 130 ? 12 : 9));
   const blur = `<clipPath id="band"><rect x="${bx}" y="${by}" width="${bandW}" height="${bandH}" rx="${Math.min(bandH / 2, 22)}"/></clipPath>
     <filter id="soft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="7"/></filter>`;
   const glass = `<g clip-path="url(#band)">${backdrop(o, W, H, "bandbg", 'filter="url(#soft)"')}<rect width="${W}" height="${H}" fill="#ffffff" fill-opacity=".14"/><rect width="${W}" height="${H}" fill="${o.brand}" fill-opacity=".18"/></g>
@@ -163,11 +172,11 @@ function glassBand(o: BannerOptions, W: number, H: number, top?: number): string
 }
 
 /** Style minimal : une rangée de points fins en bas à gauche. */
-function minimalDots(o: BannerOptions, W: number, H: number): string {
+function minimalDots(o: BannerOptions, W: number, H: number, fullH = H): string {
   const total = Math.max(1, Math.min(30, o.total));
   const gap = Math.min(15, (W - 40) / total);
   const r = Math.min(4.2, gap * 0.3);
-  const y = H - 16;
+  const y = o.stampsY != null ? Math.min(fullH - 8, Math.max(8, o.stampsY * fullH)) : H - 16;
   return Array.from({ length: total }, (_, i) => {
     const x = 20 + i * gap + r;
     const isGift = o.rewardOnLast && i === total - 1;
@@ -338,7 +347,7 @@ export function buildBannerSvg(o: BannerOptions, format: BannerFormat, width?: n
         : o.style === "track"
           ? trackLayer(o, { x: W * 0.2, y: 3, w: W * 0.6, h: H - 6 }) + streakPips(o, W * 0.12, H - 14, 12)
           : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${backdrop(o, W, H, "bg")}${scrim}${progress}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${backdrop(o, W, H, "bg")}${scrim}${progress}${layersSvg(o.layers, format, W, H)}</svg>`;
   return prefixIds(svg, uid);
 }
 
@@ -362,7 +371,7 @@ export function buildPosterSvg(
         : o.style === "track"
           ? // Marges de sécurité : l'iPhone agrandit l'image et rogne un peu les côtés ; le QR code arrive vers y = 225.
             trackLayer(o as BannerOptions, { x: 24, y: 36, w: W - 48, h: 168 })
-          : minimalDots(o as BannerOptions, W, 86)
+          : minimalDots(o as BannerOptions, W, 86, H)
       : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">
     ${backdrop(o, W, H, "bg")}
@@ -377,6 +386,80 @@ export function buildPosterSvg(
     <rect width="${W}" height="${H * 0.26}" fill="url(#top)"/>
     <rect y="${H * 0.58}" width="${W}" height="${H * 0.42}" fill="url(#bottom)"/>
     ${stamps}
+    ${layersSvg(o.layers, "poster", W, H)}
   </svg>`;
   return prefixIds(svg, uid);
+}
+
+/* ============================ CALQUES LIBRES (éditeur visuel) ============================ */
+
+/** Un texte ou un sticker posé sur la photo, au format demandé. */
+export function layerSvg(layer: ArtLayer, format: ArtFormat, W: number, H: number): string {
+  const pos = layerPos(layer, format);
+  const m = Math.min(W, H);
+  const X = (pos.x * W).toFixed(2);
+  const Y = (pos.y * H).toFixed(2);
+  const rot = layer.rot || 0;
+  if (layer.kind === "icon") {
+    const D = (pos.size / 100) * m;
+    const bg = layer.bg ? `<circle cx="${X}" cy="${Y}" r="${(D / 2).toFixed(2)}" fill="${layer.bg}"/>` : "";
+    const size = layer.bg ? D * 0.58 : D;
+    return `<g transform="rotate(${rot} ${X} ${Y})">${bg}${icon(layer.icon ?? "star", Number(X), Number(Y), size, layer.color, 1, layer.bg ? 2 : 1.8)}</g>`;
+  }
+  if (!layer.d) return "";
+  const cap = layer.cap || 700;
+  const k = ((pos.size / 100) * m) / cap;
+  const w = layer.w || 1000;
+  const cy = layer.cy ?? cap / 2;
+  const hb = layer.hb || cap;
+  const padX = cap * 0.6;
+  const padY = cap * 0.5;
+  const pill = layer.bg
+    ? `<rect x="${-padX}" y="${cy - hb / 2 - padY}" width="${w + padX * 2}" height="${hb + padY * 2}" rx="${hb > cap * 1.2 ? cap * 0.45 : (hb + padY * 2) / 2}" fill="${layer.bg}"/>`
+    : "";
+  return `<g transform="translate(${X} ${Y}) rotate(${rot}) scale(${k.toFixed(5)} ${(-k).toFixed(5)}) translate(${(-w / 2).toFixed(1)} ${(-cy).toFixed(1)})">${pill}<path d="${layer.d}" fill="${layer.color}"/></g>`;
+}
+
+export function layersSvg(layers: ArtLayer[] | undefined, format: ArtFormat, W: number, H: number): string {
+  if (!layers || layers.length === 0) return "";
+  return layers.map((l) => layerSvg(l, format, W, H)).join("");
+}
+
+/** Cadre de la bande de tampons (pour la poignée de l'éditeur). null = pas de bande déplaçable. */
+export function stampsBox(o: BannerOptions, format: ArtFormat): { x: number; y: number; w: number; h: number } | null {
+  const { w: W, h: H } = FORMATS[format];
+  if (!o.total || o.style === "none" || o.style === "track") return null;
+  if (o.style === "minimal") {
+    const total = Math.max(1, Math.min(30, o.total));
+    const gap = Math.min(15, (W - 40) / total);
+    const y = o.stampsY != null ? Math.min(H - 8, Math.max(8, o.stampsY * H)) : format === "poster" ? 70 : H - 16;
+    return { x: 14, y: y - 9, w: total * gap + 12, h: 18 };
+  }
+  const total = Math.max(1, Math.min(20, o.total));
+  const rows = total > 12 ? 2 : 1;
+  const perRow = Math.ceil(total / rows);
+  const cell = Math.min(31, (W - 44) / perRow);
+  const bandW = perRow * cell + 18;
+  const bandH = rows * cell + 12;
+  const top = format === "poster" ? 58 : undefined;
+  const by =
+    o.stampsY != null
+      ? Math.min(H - bandH - 2, Math.max(2, o.stampsY * H - bandH / 2))
+      : (top ?? H - bandH - (H > 130 ? 12 : 9));
+  return { x: (W - bandW) / 2, y: by, w: bandW, h: bandH };
+}
+
+/** Cadre d'un calque (centre, largeur, hauteur, rotation) dans le format demandé — pour la sélection dans l'éditeur. */
+export function layerBox(layer: ArtLayer, format: ArtFormat, W: number, H: number): { cx: number; cy: number; w: number; h: number; rot: number } {
+  const pos = layerPos(layer, format);
+  const m = Math.min(W, H);
+  if (layer.kind === "icon") {
+    const D = (pos.size / 100) * m;
+    return { cx: pos.x * W, cy: pos.y * H, w: D, h: D, rot: layer.rot || 0 };
+  }
+  const cap = layer.cap || 700;
+  const k = ((pos.size / 100) * m) / cap;
+  const padX = layer.bg ? cap * 0.6 : cap * 0.15;
+  const padY = layer.bg ? cap * 0.5 : cap * 0.25;
+  return { cx: pos.x * W, cy: pos.y * H, w: ((layer.w || 1000) + padX * 2) * k, h: ((layer.hb || cap) + padY * 2) * k, rot: layer.rot || 0 };
 }

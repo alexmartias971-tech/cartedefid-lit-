@@ -10,6 +10,8 @@ import { guadeloupeLocalToDate, isHexColor, slugify } from "@/lib/format";
 import { upsertGoogleClass } from "@/lib/google/wallet";
 import { createNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseLayout } from "@/lib/layout";
+import { LINE_ICONS } from "@/lib/visual";
 import type { Business, Program } from "@/lib/types";
 import { syncCards } from "@/lib/wallet-sync";
 
@@ -268,6 +270,10 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     streak_reminder_hour: clampInt(int(fd, "streak_reminder_hour"), 0, 23, 11),
     lap_times_enabled: fd.get("lap_times_enabled") === "on",
   };
+  // Disposition de l'éditeur visuel (zones, textes et stickers), vérifiée avant d'être enregistrée
+  if (fd.has("card_layout")) {
+    programFields.card_layout = parseLayout(text(fd, "card_layout"), new Set(Object.keys(LINE_ICONS)));
+  }
   if (fd.get("remove_strip_image") === "on") programFields.strip_image_url = null;
   if (fd.get("remove_stamp_icon") === "on") programFields.stamp_icon_url = null;
   if (fd.get("remove_stamp_empty_icon") === "on") programFields.stamp_empty_icon_url = null;
@@ -278,6 +284,7 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
   const stampEmpty = fileOf(fd, "stamp_empty_icon");
 
   let createdId: string | null = null;
+  let warning: string | null = null;
   try {
     let business: Business;
     if (!businessId) {
@@ -305,10 +312,21 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     if (stampIcon) programFields.stamp_icon_url = await uploadImage(stampIcon, business.id, "stamp");
     if (stampEmpty) programFields.stamp_empty_icon_url = await uploadImage(stampEmpty, business.id, "stamp-empty");
 
-    const { data: programData, error: progError } = businessId
-      ? await supabase.from("loyalty_programs").update(programFields).eq("business_id", business.id).select("*").single()
-      : await supabase.from("loyalty_programs").insert({ ...programFields, business_id: business.id }).select("*").single();
+    const writeProgram = (fields: Record<string, unknown>) =>
+      businessId
+        ? supabase.from("loyalty_programs").update(fields).eq("business_id", business.id).select("*").single()
+        : supabase.from("loyalty_programs").insert({ ...fields, business_id: business.id }).select("*").single();
+    let { data: programData, error: progError } = await writeProgram(programFields);
+    let layoutMissing = false;
+    if (progError && "card_layout" in programFields && /card_layout/.test(progError.message)) {
+      // La base n'a pas encore la colonne de l'éditeur visuel (script 10) : on enregistre tout le reste
+      const { card_layout: _skip, ...rest } = programFields;
+      void _skip;
+      ({ data: programData, error: progError } = await writeProgram(rest));
+      layoutMissing = !progError;
+    }
     if (progError || !programData) return { error: `Carte non enregistrée : ${progError?.message}` };
+    if (layoutMissing) warning = "Enregistré, sauf la disposition de l'éditeur : lance le script supabase/10-editeur-visuel.sql dans Supabase.";
     const program = programData as Program;
 
     // Photo propre à chaque niveau (facultative)
@@ -337,6 +355,7 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     revalidatePath("/admin");
     redirect(`/admin/entreprises/${createdId}?cree=1`);
   }
+  if (warning) return { error: warning };
   return { ok: "Enregistré. Les cartes des clients se mettent à jour dans quelques instants." };
 }
 
