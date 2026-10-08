@@ -3,7 +3,7 @@ import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
-import { primaryLogoPng, squareLogoPng, wideLogoPng } from "@/lib/logo";
+import { primaryLogoPng, primaryNamePng, squareLogoPng, wideLogoPng } from "@/lib/logo";
 import { renderCardPoster, renderCardStrip } from "@/lib/strip";
 import type { CardBundle } from "@/lib/types";
 
@@ -17,23 +17,31 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   const state = computeCardState(program, card, tiers, catalog);
   const design = designFromProgram(program);
   const labels = fieldLabels(design, state);
+  // En haut de la carte : le petit logo (si le commerçant en a un et le garde), et/ou le nom.
+  // Sans logo, le nom est toujours affiché (sinon on ne reconnaîtrait pas la carte dans le Wallet).
+  const hasLogo = !!business.logo_url;
+  const showTopLogo = hasLogo && design.layout.topLogo !== false;
+  const showName = design.showLogoText || !showTopLogo;
+  const none = Promise.resolve(null);
   const [strip1, strip2, strip3, icon1, icon2, icon3, logo1, logo2, logo3, art1, art2, art3, plogo1, plogo2, plogo3] = await Promise.all([
     renderCardStrip(bundle, 1),
     renderCardStrip(bundle, 2),
     renderCardStrip(bundle, 3),
-    squareLogoPng(business, program, 29),
-    squareLogoPng(business, program, 58),
-    squareLogoPng(business, program, 87),
-    wideLogoPng(business, program, 1),
-    wideLogoPng(business, program, 2),
-    wideLogoPng(business, program, 3),
+    // Icône : 38 × 38 points (guide Apple, juin 2026)
+    squareLogoPng(business, program, 38),
+    squareLogoPng(business, program, 76),
+    squareLogoPng(business, program, 114),
+    showTopLogo ? wideLogoPng(business, program, 1) : none,
+    showTopLogo ? wideLogoPng(business, program, 2) : none,
+    showTopLogo ? wideLogoPng(business, program, 3) : none,
     // iOS 27 : carte « poster » avec la photo sur toute la carte (358 × 448 points)
     renderCardPoster(bundle, 1),
     renderCardPoster(bundle, 2),
     renderCardPoster(bundle, 3),
-    primaryLogoPng(business, 1),
-    primaryLogoPng(business, 2),
-    primaryLogoPng(business, 3),
+    // iOS 27 n'affiche pas de texte à côté du logo : sans logo, on écrit le nom en image
+    showTopLogo ? primaryLogoPng(business, 1) : showName ? primaryNamePng(business, program, 1) : none,
+    showTopLogo ? primaryLogoPng(business, 2) : showName ? primaryNamePng(business, program, 2) : none,
+    showTopLogo ? primaryLogoPng(business, 3) : showName ? primaryNamePng(business, program, 3) : none,
   ]);
 
   const url = appUrl();
@@ -62,9 +70,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
       "icon.png": icon1,
       "icon@2x.png": icon2,
       "icon@3x.png": icon3,
-      "logo.png": logo1,
-      "logo@2x.png": logo2,
-      "logo@3x.png": logo3,
+      ...(logo1 && logo2 && logo3 ? { "logo.png": logo1, "logo@2x.png": logo2, "logo@3x.png": logo3 } : {}),
       "strip.png": strip1,
       "strip@2x.png": strip2,
       "strip@3x.png": strip3,
@@ -88,7 +94,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
       serialNumber: card.serial_number,
       organizationName: business.name,
       description: `Carte de fidélité ${business.name}`,
-      ...(design.showLogoText ? { logoText: business.name } : {}),
+      ...(showName ? { logoText: business.name } : {}),
       backgroundColor: hexToRgb(state.tier?.color || program.background_color),
       foregroundColor: hexToRgb(program.foreground_color),
       labelColor: hexToRgb(program.label_color),
@@ -123,7 +129,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     slots.bottom.slice(0, 2).forEach((f) => f && store.secondaryFields.push(f));
     slots.bottom.slice(2, 4).forEach((f) => f && store.auxiliaryFields.push(f));
   } else {
-    // Recto de la carte (la disposition est imposée par Apple : en-tête, bannière, 2 lignes de champs)
+    // Recto de la carte (disposition imposée par Apple : en-tête, bannière, puis UNE ligne de 4 champs au maximum)
     store.headerFields.push({
       key: "balance",
       label: labels.balance,
@@ -163,7 +169,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
       });
     }
   }
-  const unit = program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€";
+  const unit = program.mode === "stamps" ? (program.progress_style === "track" ? "secteurs" : "tampons") : program.mode === "points" ? "points" : "€";
   const streakText = streakSentence(state, program.streak_bonus, unit);
 
   // Dos de la carte. "changeMessage" = le texte qui s'affiche en notification quand la valeur change.
@@ -172,14 +178,20 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     label: "Comment ça marche",
     value: describeProgram(program, tiers).map((r) => `${r.icon} ${r.title} : ${r.text}`).join("\n\n"),
   });
-  if (streakText) store.backFields.push({ key: "streakinfo", label: "Ta série", value: `${streakText}\nMeilleure série : ${state.streak?.best ?? 0} semaine(s).` });
+  if (streakText) {
+    const best = state.streak?.best ?? 0;
+    store.backFields.push({ key: "streakinfo", label: "Ta série", value: `${streakText}\nMeilleure série : ${best} semaine${best > 1 ? "s" : ""}.` });
+  }
+  // Notification à chaque passage : portée par le compteur (il ne change qu'en caisse), avec la phrase en message.
+  // Ainsi, enregistrer le design ou reformuler les phrases n'envoie aucune notification aux clients.
   store.backFields.push(
-    { key: "status", label: "Ta carte", value: state.sentence, changeMessage: "%@" },
+    { key: "progress", label: "Ta progression", value: state.balanceValue, changeMessage: `${state.sentence.replace(/%/g, "%%")} (%@)` },
+    { key: "status", label: "Ta carte", value: state.sentence },
     {
       key: "message",
       label: `Message de ${business.name}`,
       value: card.last_message ?? "Aucun message pour le moment.",
-      changeMessage: "%@",
+      ...(card.last_message ? { changeMessage: "%@" } : {}),
     },
   );
   if (coupons.length > 0) {
@@ -207,7 +219,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     store.backFields.push({
       key: "referral",
       label: "Parraine un ami",
-      value: `Envoie ce lien à un ami : ${shareUrl}\nÀ sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "points" : "tampon(s)"} en plus.`,
+      value: `Envoie ce lien à un ami : ${shareUrl}\nÀ sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "point" : "tampon"}${program.referral_bonus > 1 ? "s" : ""} en plus.`,
       dataDetectorTypes: ["PKDataDetectorTypeLink"],
     });
   }
@@ -235,11 +247,6 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
       dataDetectorTypes: ["PKDataDetectorTypeLink"],
     });
   }
-  store.backFields.push({
-    key: "rules",
-    label: "Règles du programme",
-    value: `${state.rule} ${program.max_stamps_per_day} passage(s) maximum par jour. Enregistré par le commerçant en scannant ta carte.`,
-  });
   if (program.back_text) store.backFields.push({ key: "info", label: "Informations", value: program.back_text });
   if (business.address) store.backFields.push({ key: "address", label: "Adresse", value: business.address });
   if (business.phone) {
@@ -268,7 +275,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
         i === primary.length - 1 && i > 0 ? { ...f, key: `p${f.key}`, textAlignment: "PKTextAlignmentRight" } : { ...f, key: `p${f.key}` },
       ),
     );
-    if (slots.footer) poster.footerFields.push({ key: "pstatus", value: slots.footer, changeMessage: "%@" });
+    if (slots.footer) poster.footerFields.push({ key: "pstatus", value: slots.footer });
   } else {
     const pf = posterFields(state, labels, customer.first_name);
     // L'alerte « classement » seulement pour les clients qui acceptent les messages
@@ -277,7 +284,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     pf.primary.forEach((f, i) =>
       poster.primaryFields.push(i === pf.primary.length - 1 ? { ...f, textAlignment: "PKTextAlignmentRight" } : f),
     );
-    poster.footerFields.push({ key: "pstatus", value: pf.footer, changeMessage: "%@" });
+    poster.footerFields.push({ key: "pstatus", value: pf.footer });
   }
   poster.backFields.push(...store.backFields.map((f) => ({ ...f, key: `p-${f.key}` })));
 
@@ -287,7 +294,6 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
     format: "PKBarcodeFormatQR",
     message: card.serial_number,
     messageEncoding: "iso-8859-1",
-    altText: customer.first_name,
   });
 
   return pass.getAsBuffer();

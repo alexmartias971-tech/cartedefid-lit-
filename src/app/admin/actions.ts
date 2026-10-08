@@ -10,12 +10,17 @@ import { guadeloupeLocalToDate, isHexColor, slugify } from "@/lib/format";
 import { upsertGoogleClass } from "@/lib/google/wallet";
 import { createNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { parseLayout } from "@/lib/layout";
+import { isStorageUrl, parseLayout } from "@/lib/layout";
 import { LINE_ICONS } from "@/lib/visual";
 import type { Business, Program } from "@/lib/types";
 import { syncCards } from "@/lib/wallet-sync";
 
-export type FormState = { error?: string; ok?: string };
+export type FormState = {
+  error?: string;
+  ok?: string;
+  /** Identifiants des niveaux et cadeaux enregistrés (pour que l'éditeur ne les recrée pas au prochain enregistrement). */
+  saved?: { tiers: { key: string; id: string }[]; catalog: { key: string; id: string }[] };
+};
 
 const text = (fd: FormData, key: string) => String(fd.get(key) ?? "").trim();
 const optional = (fd: FormData, key: string) => text(fd, key) || null;
@@ -24,6 +29,7 @@ const int = (fd: FormData, key: string) => Number.parseInt(text(fd, key), 10);
 const IMAGE_LABELS: Record<string, string> = {
   logo: "Le logo",
   strip: "La photo de la carte",
+  bg: "Le visuel de ce téléphone",
   tier: "La photo du niveau",
   stamp: "L'icône de tampon",
   "stamp-empty": "L'icône de tampon vide",
@@ -44,6 +50,26 @@ async function uploadImage(file: File, businessId: string, kind: keyof typeof IM
   return supabase.storage.from("logos").getPublicUrl(path).data.publicUrl;
 }
 
+/**
+ * Envoi d'une image dès qu'elle est choisie dans l'éditeur (une image par envoi : on reste sous la limite
+ * de 4,5 Mo de Vercel, même avec un logo, une photo et un visuel par téléphone).
+ */
+export async function uploadCardImage(fd: FormData): Promise<{ url?: string; error?: string }> {
+  await requireAdmin();
+  const file = fd.get("file");
+  const kind = String(fd.get("kind") ?? "");
+  const businessId = String(fd.get("business_id") ?? "");
+  if (!(file instanceof File) || file.size === 0) return { error: "Aucune image reçue." };
+  if (!["logo", "strip", "bg", "tier"].includes(kind)) return { error: "Type d'image inconnu." };
+  // Carte pas encore créée : l'image va dans un dossier « brouillons »
+  const folder = /^[0-9a-f-]{36}$/i.test(businessId) ? businessId : "brouillons";
+  try {
+    return { url: await uploadImage(file, folder, kind as keyof typeof IMAGE_LABELS) };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
 const fileOf = (fd: FormData, key: string): File | null => {
   const f = fd.get(key);
   return f instanceof File && f.size > 0 ? f : null;
@@ -58,8 +84,10 @@ type TierInput = {
   perk: string | null;
   color: string | null;
   remove_image?: boolean;
+  /** Photo déjà envoyée (éditeur v2). */
+  image_url?: string | null;
 };
-type CatalogInput = { id?: string; name: string; cost: number };
+type CatalogInput = { id?: string; key?: string; name: string; cost: number };
 
 function parseJsonList<T>(raw: string): T[] {
   try {
@@ -70,12 +98,16 @@ function parseJsonList<T>(raw: string): T[] {
   }
 }
 
-/** Remplace la liste (niveaux ou cadeaux) en gardant les lignes existantes (pour ne pas perdre l'historique). */
+/**
+ * Remplace la liste (niveaux ou cadeaux) en gardant les lignes existantes (pour ne pas perdre l'historique).
+ * Renvoie l'identifiant de chaque ligne, dans l'ordre.
+ */
 async function syncList(
   table: "program_tiers" | "reward_catalog",
   programId: string,
   rows: Record<string, unknown>[],
-) {
+): Promise<string[]> {
+  const ids: string[] = [];
   const supabase = createAdminClient();
   const { data: existing } = await supabase.from(table).select("id").eq("program_id", programId);
   const keep = new Set(rows.map((r) => r.id).filter(Boolean) as string[]);
@@ -87,11 +119,14 @@ async function syncList(
     if (id && (existing ?? []).some((e: { id: string }) => e.id === id)) {
       const { error } = await supabase.from(table).update(values).eq("id", id as string);
       if (error) throw new Error(error.message);
+      ids.push(id as string);
     } else {
-      const { error } = await supabase.from(table).insert(values);
+      const { data, error } = await supabase.from(table).insert(values).select("id").single();
       if (error) throw new Error(error.message);
+      ids.push((data as { id: string }).id);
     }
   }
+  return ids;
 }
 
 /** Choisit une adresse unique : boulangerie-du-bourg, puis boulangerie-du-bourg-2… */
@@ -163,11 +198,13 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
       min_value: Number(t.min_value) || 0,
       perk: String(t.perk ?? "").trim().slice(0, 120) || null,
       color: t.color && isHexColor(t.color) ? t.color : null,
+      uploaded: isStorageUrl(t.image_url) ? t.image_url : null,
     }))
     .filter((t) => t.name);
-  const catalog = parseJsonList<CatalogInput>(text(fd, "catalog_json"))
-    .map((r) => ({ id: r.id, name: String(r.name ?? "").trim().slice(0, 60), cost: Math.round(Number(r.cost)) }))
+  const catalogWithKeys = parseJsonList<CatalogInput>(text(fd, "catalog_json"))
+    .map((r) => ({ key: String(r.key ?? ""), id: r.id, name: String(r.name ?? "").trim().slice(0, 60), cost: Math.round(Number(r.cost)) }))
     .filter((r) => r.name && r.cost > 0);
+  const catalog = catalogWithKeys.map(({ key, ...r }) => (void key, r));
 
   if (!name) return { error: "Indique le nom de l'entreprise." };
   if (!programName) return { error: "Indique le nom de la carte." };
@@ -275,6 +312,10 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     programFields.card_layout = parseLayout(text(fd, "card_layout"), new Set(Object.keys(LINE_ICONS)));
   }
   if (fd.get("remove_strip_image") === "on") programFields.strip_image_url = null;
+  // Images déjà envoyées par l'éditeur (uploadCardImage) : seules les adresses du stockage Walty sont acceptées
+  const stripUrl = text(fd, "strip_image_url");
+  if (isStorageUrl(stripUrl)) programFields.strip_image_url = stripUrl;
+  const logoUrl = text(fd, "logo_url");
   if (fd.get("remove_stamp_icon") === "on") programFields.stamp_icon_url = null;
   if (fd.get("remove_stamp_empty_icon") === "on") programFields.stamp_empty_icon_url = null;
 
@@ -285,6 +326,7 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
 
   let createdId: string | null = null;
   let warning: string | null = null;
+  let savedIds: NonNullable<FormState["saved"]> = { tiers: [], catalog: [] };
   try {
     let business: Business;
     if (!businessId) {
@@ -303,6 +345,13 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     }
 
     // Images envoyées
+    if (isStorageUrl(logoUrl) && logoUrl !== business.logo_url) {
+      await supabase.from("businesses").update({ logo_url: logoUrl }).eq("id", business.id);
+      business.logo_url = logoUrl;
+    } else if (fd.get("remove_logo") === "on" && business.logo_url) {
+      await supabase.from("businesses").update({ logo_url: null }).eq("id", business.id);
+      business.logo_url = null;
+    }
     if (logo) {
       const logo_url = await uploadImage(logo, business.id, "logo");
       await supabase.from("businesses").update({ logo_url }).eq("id", business.id);
@@ -331,15 +380,23 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
 
     // Photo propre à chaque niveau (facultative)
     const tierRows: Record<string, unknown>[] = [];
+    const tierKeys: string[] = [];
     for (const t of tiers) {
-      const { key, remove_image, ...row } = t as Record<string, unknown> & { key: string; remove_image: boolean };
+      tierKeys.push(String((t as { key?: string }).key ?? ""));
+      const { key, remove_image, uploaded, ...row } = t as Record<string, unknown> & { key: string; remove_image: boolean; uploaded: string | null };
       const file = key ? fileOf(fd, `tier_image_${key}`) : null;
       if (file) row.image_url = await uploadImage(file, business.id, "tier");
+      else if (uploaded) row.image_url = uploaded;
       else if (remove_image) row.image_url = null;
       tierRows.push(row);
     }
-    await syncList("program_tiers", program.id, tierRows);
-    await syncList("reward_catalog", program.id, catalog);
+    const tierIds = await syncList("program_tiers", program.id, tierRows);
+    // Catalogue envoyé seulement pour une carte à points : sinon on n'y touche pas (pas de cadeaux fantômes, rien de perdu)
+    const catalogIds = fd.has("catalog_json") ? await syncList("reward_catalog", program.id, catalog) : [];
+    savedIds = {
+      tiers: tierIds.map((id, i) => ({ key: tierKeys[i], id })),
+      catalog: catalogIds.map((id, i) => ({ key: catalogWithKeys[i].key, id })),
+    };
     await supabase.rpc("refresh_program_tiers", { p_program_id: program.id });
 
     if (businessId) {
@@ -355,8 +412,8 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     revalidatePath("/admin");
     redirect(`/admin/entreprises/${createdId}?cree=1`);
   }
-  if (warning) return { error: warning };
-  return { ok: "Enregistré. Les cartes des clients se mettent à jour dans quelques instants." };
+  if (warning) return { error: warning, saved: savedIds };
+  return { ok: "Enregistré. Les cartes des clients se mettent à jour dans quelques instants.", saved: savedIds };
 }
 
 /** Offre ponctuelle : ajoute un coupon sur la carte de tous les clients (et prévient ceux qui acceptent les offres). */

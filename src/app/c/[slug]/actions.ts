@@ -35,7 +35,13 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   if (!email && !phone) return { error: "Indique ton email ou ton téléphone." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "L'email ne semble pas valide." };
   if (phone && phone.replace(/\D/g, "").length < 9) return { error: "Le téléphone ne semble pas valide." };
-  if (birthDate && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return { error: "Date de naissance invalide." };
+  if (birthDate) {
+    // La date doit exister (pas de 31 février)
+    const d = new Date(`${birthDate}T12:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== birthDate) {
+      return { error: "Cette date d'anniversaire n'existe pas : vérifie le jour et le mois." };
+    }
+  }
   if (!privacy) return { error: "Coche la case pour confirmer que tu as lu comment tes données sont utilisées." };
 
   const supabase = createAdminClient();
@@ -74,8 +80,14 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
       .maybeSingle();
     existing = (data as Existing | null) ?? null;
   }
+  // Déjà une carte : on ne l'ouvre PAS ici (sinon, avec le numéro d'un autre client, on verrait sa carte et son QR code)
   const existingCard = existing?.cards?.[0];
-  if (existingCard) redirect(`/carte/${existingCard.web_token}?deja=1`);
+  if (existingCard) {
+    return {
+      error:
+        "Tu as déjà une carte avec ce numéro (ou cet e-mail) : retrouve-la dans ton Wallet (app Cartes sur iPhone, Google Wallet sur Android). Tu ne la trouves plus ? Demande en caisse, on t'aide.",
+    };
+  }
 
   let customerId = existing?.id;
   if (!customerId) {

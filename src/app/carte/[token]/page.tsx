@@ -1,6 +1,5 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import QRCode from "qrcode";
 import CardPreview from "@/components/CardPreview";
 import WalletButtons from "@/components/WalletButtons";
 import { loadCardBundle } from "@/lib/cards";
@@ -8,6 +7,8 @@ import { isAppleConfigured, isGoogleConfigured } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, formatEuro, photoFor, resolveSlots, secondaryField, stripProgress } from "@/lib/card-state";
 import { appUrl } from "@/lib/env";
 import ShareButton from "@/components/ShareButton";
+import QRCode from "qrcode";
+import { mascotSvg } from "@/lib/mascot";
 
 export const metadata = { title: "Ma carte de fidélité" };
 
@@ -43,36 +44,59 @@ export default async function CardPage({
     coupons: coupons.length,
   });
 
+  const giftQr = state.rewardReady ? await QRCode.toDataURL(card.serial_number, { width: 360, margin: 1 }) : null;
   const ua = (await headers()).get("user-agent") ?? "";
   const isIOS = /iPhone|iPad|iPod/i.test(ua);
   const isAndroid = /Android/i.test(ua);
   const apple = isAppleConfigured() && !isAndroid;
   const google = isGoogleConfigured() && !isIOS;
-  const qr = await QRCode.toDataURL(card.serial_number, { width: 360, margin: 1 });
 
   return (
     <main className="flex-1 w-full max-w-md mx-auto p-4 space-y-5">
-      <h1 className="text-2xl font-bold text-center">
-        Ta carte {business.name} est prête, {customer.first_name} !
-      </h1>
+      {state.rewardReady ? (
+        // Le moment cadeau : plein écran à montrer en caisse
+        <section className="rounded-3xl p-6 text-center shadow-lg" style={{ background: program.background_color, color: program.foreground_color }}>
+          {design.layout.layers.some((l) => l.kind === "mascot") ? (
+            <svg viewBox="0 0 260 300" className="mx-auto h-28 w-auto" aria-hidden="true" dangerouslySetInnerHTML={{ __html: mascotSvg("stamp", 130, 150, 300, "gift") }} />
+          ) : business.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={business.logo_url} alt="" className="mx-auto h-20 max-w-[200px] object-contain" />
+          ) : (
+            <div className="text-6xl" aria-hidden="true">🎁</div>
+          )}
+          <h1 className="mt-2 text-3xl font-black">Ton cadeau t&apos;attend, {customer.first_name} !</h1>
+          <p className="mt-2 text-lg font-semibold">
+            {program.mode === "points" && state.affordable.length > 0 ? state.affordable[state.affordable.length - 1].name : program.reward_description}
+          </p>
+          <p className="mt-3 text-sm opacity-90">Montre ce QR code en caisse :</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={giftQr ?? ""} alt="QR code à présenter en caisse" className="mx-auto mt-2 h-48 w-48 rounded-xl bg-white p-2" />
+        </section>
+      ) : (
+        <div className="text-center space-y-1">
+          <h1 className="text-2xl font-bold">
+            {card.lifetime_visits > 0 ? `Ta carte ${business.name}` : `Ta carte ${business.name} est prête, ${customer.first_name} !`}
+          </h1>
+          <p className="text-gray-700">{state.sentence}</p>
+        </div>
+      )}
       {deja && <p className="alert-ok text-center">Tu avais déjà une carte : la voici.</p>}
 
-      <div className="panel space-y-3 text-center">
-        <p className="font-semibold">Ajoute-la à ton téléphone :</p>
-        <WalletButtons token={token} showApple={apple} showGoogle={google} />
-        {!apple && !google && (
-          <p className="text-sm text-gray-600">Garde simplement cette page en favori : c&apos;est ta carte.</p>
-        )}
-      </div>
+      {(apple || google) && (
+        <div className="panel space-y-3 text-center">
+          <p className="font-semibold">Ajoute-la à ton téléphone :</p>
+          <WalletButtons token={token} showApple={apple} showGoogle={google} />
+        </div>
+      )}
 
       <div className="flex justify-center">
         <CardPreview
           platform={isAndroid ? "google" : "poster"}
-          photoUrl={photoFor(program, state.tier)}
+          photoUrl={photoFor(program, state.tier, isAndroid ? "google" : "poster")}
           businessName={business.name}
           logoUrl={business.logo_url}
           customerName={customer.first_name}
-          design={design}
+          design={state.tier?.image_url ? { ...design, layout: { ...design.layout, crop: undefined } } : design}
           state={state}
           slots={slots}
           secondary={secondaryField(program, card, catalog)}
@@ -83,12 +107,9 @@ export default async function CardPage({
       </div>
 
       <div className="panel text-center space-y-2">
-        <p className="font-semibold">Ma carte web (si tu n&apos;utilises pas de Wallet)</p>
-        <p className="text-sm">{state.sentence}</p>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={qr} alt="Ton QR code à présenter en caisse" className="mx-auto w-56 h-56" />
+        <p className="font-semibold">Pas de Wallet ?</p>
         <p className="text-sm text-gray-600">
-          Montre ce QR code en caisse. Ajoute cette page à tes favoris pour la retrouver.
+          Ajoute cette page à tes favoris : c&apos;est aussi ta carte. Montre son QR code en caisse.
         </p>
         {card.last_message && <p className="text-sm bg-gray-50 rounded-lg p-2">📣 {card.last_message}</p>}
       </div>

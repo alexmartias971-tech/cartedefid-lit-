@@ -4,20 +4,24 @@
  *
  * Formats officiels (en points, @1x) :
  *  - Apple, carte de fidélité (storeCard) : bannière 375 × 144  → 1125 × 432 px en @3x
- *  - Google Wallet : image « héros » 1032 × 336 px (3:1)          → base 375 × 122
+ *  - Google Wallet : image « héros » 1032 × 812 px (≈ 5:4, consignes Google du 7 oct. 2026) → base 375 × 295
+ *    (l'ancien bandeau 1032 × 336 est désormais déconseillé par Google : « pas d'image fine et allongée »)
  *  - Apple iOS 27, carte « poster » (posterGeneric) : 358 × 448   → 1074 × 1344 px en @3x
  *
  * Icônes : Lucide (licence ISC, https://lucide.dev) — traits fins, style « app ».
  */
 
-import { layerPos, type ArtFormat, type ArtLayer } from "@/lib/layout";
+import { layerPos, type ArtFormat, type ArtLayer, type Crop, type Fill, type StampLook } from "@/lib/layout";
+import { mascotRatio, mascotSvg, type MascotPose } from "@/lib/mascot";
 
 export const FORMATS = {
   apple: { w: 375, h: 144 },
-  google: { w: 375, h: 122 },
+  google: { w: 375, h: 295 },
   poster: { w: 358, h: 448 },
+  /** Ancien bandeau Google (3:1), gardé pour les cartes pas encore enregistrées avec l'éditeur v2. */
+  googleLegacy: { w: 375, h: 122 },
 } as const;
-export type BannerFormat = "apple" | "google";
+export type BannerFormat = "apple" | "google" | "googleLegacy";
 
 const FLAME_ICON =
   '<path d="M12 3q1 4 4 6.5t3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 5 .5c0-2-1.5-3-1.5-5.5 0-1.5.5-3 2.5-4"/>';
@@ -95,7 +99,23 @@ export type BannerOptions = {
   layers?: ArtLayer[];
   /** Hauteur de la bande de tampons (0 = en haut, 1 = en bas). null = place par défaut. */
   stampsY?: number | null;
+  /** Aspect des cases : tampon classique, logo du commerce, icônes (absent = icônes). */
+  look?: StampLook;
+  /** Logo du commerce (pour le logo posé sur le visuel et les tampons « logo »). ratio = largeur / hauteur. */
+  logo?: LogoArt | null;
+  /** Cadrage de la photo (point visé + zoom). Utilisé seulement si on connaît le format de la photo. */
+  crop?: Crop | null;
+  /** Largeur / hauteur de la photo (pour un cadrage précis). */
+  photoRatio?: number | null;
+  /** Fond prêt à l'emploi quand il n'y a pas de photo. */
+  fill?: Fill;
+  /** Mode points : une jauge continue jusqu'au prochain cadeau (au lieu de cases). */
+  gauge?: boolean;
 };
+
+export type LogoArt = { href: string; ratio: number };
+/** Ce dont les calques ont besoin en plus de la disposition (le logo du commerce). */
+export type LayerContext = { logo?: LogoArt | null; uid?: string };
 
 function esc(v: string) {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -119,18 +139,106 @@ function icon(id: string, x: number, y: number, size: number, color: string, opa
   return `<svg x="${x - size / 2}" y="${y - size / 2}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-opacity="${opacity}" stroke-width="${weight}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 }
 
-/** Photo (ou dégradé de marque si pas de photo), cadrée sur la zone choisie. */
-function backdrop(o: Pick<BannerOptions, "photo" | "focus" | "brand" | "darken">, W: number, H: number, id: string, filter = "") {
+/**
+ * Place une photo de format `ratio` (largeur / hauteur) dans un cadre W × H, comme « remplir » :
+ * la photo couvre tout le cadre, agrandie de `zoom`, et le point visé (x, y entre 0 et 1) reste dans le cadre.
+ */
+export function coverRect(ratio: number, W: number, H: number, crop: Crop): { x: number; y: number; w: number; h: number } {
+  const zoom = Math.max(1, crop.zoom || 1);
+  let w = W * zoom;
+  let h = w / ratio;
+  if (h < H * zoom) {
+    h = H * zoom;
+    w = h * ratio;
+  }
+  return { x: (W - w) * Math.min(1, Math.max(0, crop.x)), y: (H - h) * Math.min(1, Math.max(0, crop.y)), w, h };
+}
+
+const FOCUS_Y: Record<Focus, number> = { top: 0, center: 0.5, bottom: 1 };
+
+/**
+ * Fonds sans photo : des dégradés continus et flous tirés des couleurs de la carte (charte Walty :
+ * pas de formes, seulement des couleurs qui se fondent).
+ */
+function fillBackdrop(kind: Fill, brand: string, accent: string, W: number, H: number, id: string, filter: string): string {
+  const deep = mix(brand, "#000000", 0.38);
+  const light = mix(brand, "#ffffff", 0.25);
+  const glow = (gid: string, cx: number, cy: number, r: number, color: string, op: number) =>
+    `<radialGradient id="${gid}" cx="${cx}" cy="${cy}" r="${r}"><stop offset="0" stop-color="${color}" stop-opacity="${op}"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></radialGradient>`;
+  const layer = (gid: string) => `<rect width="${W}" height="${H}" fill="url(#${gid})" ${filter}/>`;
+  if (kind === "uni") return `<rect width="${W}" height="${H}" fill="${brand}" ${filter}/>`;
+  if (kind === "halo") {
+    return `<defs>${glow(`${id}h1`, 0.5, 0.42, 0.75, light, 0.85)}${glow(`${id}h2`, 0.5, 1.05, 0.7, accent, 0.45)}</defs><rect width="${W}" height="${H}" fill="${deep}" ${filter}/>${layer(`${id}h1`)}${layer(`${id}h2`)}`;
+  }
+  if (kind === "soleil") {
+    return `<defs><linearGradient id="${id}s0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${mix(accent, brand, 0.25)}"/><stop offset=".55" stop-color="${brand}"/><stop offset="1" stop-color="${deep}"/></linearGradient>${glow(`${id}s1`, 0.72, 0.05, 0.6, "#ffffff", 0.35)}</defs><rect width="${W}" height="${H}" fill="url(#${id}s0)" ${filter}/>${layer(`${id}s1`)}`;
+  }
+  // « aurore » : lueur de la couleur du cadeau en haut à droite, lumière douce en bas à gauche
+  return `<defs>${glow(`${id}a1`, 0.88, 0.08, 0.85, accent, 0.7)}${glow(`${id}a2`, 0.08, 0.98, 0.9, light, 0.6)}</defs><rect width="${W}" height="${H}" fill="${deep}" ${filter}/>${layer(`${id}a1`)}${layer(`${id}a2`)}`;
+}
+
+/** Photo (ou fond prêt à l'emploi / dégradé de marque si pas de photo), cadrée sur la zone choisie. */
+function backdrop(
+  o: Pick<BannerOptions, "photo" | "focus" | "brand" | "darken"> & Partial<Pick<BannerOptions, "crop" | "photoRatio" | "fill" | "accent">>,
+  W: number,
+  H: number,
+  id: string,
+  filter = "",
+) {
+  if (!o.photo && o.fill) return fillBackdrop(o.fill, o.brand, o.accent ?? o.brand, W, H, id, filter);
   if (!o.photo) {
     return `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${mix(o.brand, "#ffffff", 0.14)}"/><stop offset="1" stop-color="${mix(o.brand, "#000000", 0.25)}"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#${id})" ${filter}/>`;
   }
-  return `<rect width="${W}" height="${H}" fill="${o.brand}"/><image href="${esc(o.photo)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="${ALIGN[o.focus]}" ${filter}/>${
-    o.darken > 0 ? `<rect width="${W}" height="${H}" fill="#000" fill-opacity="${o.darken / 100}"/>` : ""
-  }`;
+  const veil = o.darken > 0 ? `<rect width="${W}" height="${H}" fill="#000" fill-opacity="${o.darken / 100}"/>` : "";
+  if (o.photoRatio && o.photoRatio > 0) {
+    const r = coverRect(o.photoRatio, W, H, o.crop ?? { x: 0.5, y: FOCUS_Y[o.focus] ?? 0.5, zoom: 1 });
+    return `<rect width="${W}" height="${H}" fill="${o.brand}"/><image href="${esc(o.photo)}" x="${r.x.toFixed(2)}" y="${r.y.toFixed(2)}" width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}" preserveAspectRatio="none" ${filter}/>${veil}`;
+  }
+  return `<rect width="${W}" height="${H}" fill="${o.brand}"/><image href="${esc(o.photo)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="${ALIGN[o.focus]}" ${filter}/>${veil}`;
+}
+
+/** Noir ou blanc, selon ce qui se lit le mieux sur la couleur donnée. */
+export function inkOn(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const n = m ? parseInt(m[1], 16) : 0;
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.62 ? "#1a1320" : "#ffffff";
+}
+
+/** Position de la jauge de points (mode points). */
+function gaugeGeom(o: Pick<BannerOptions, "stampsY">, W: number, H: number, top?: number) {
+  const bandW = Math.min(W - 40, 330);
+  const bandH = 34;
+  const bx = (W - bandW) / 2;
+  const by =
+    o.stampsY != null ? Math.min(H - bandH - 2, Math.max(2, o.stampsY * H - bandH / 2)) : (top ?? H - bandH - (H > 200 ? 26 : H > 130 ? 12 : 9));
+  return { x: bx, y: by, w: bandW, h: bandH };
+}
+
+/** Jauge de points : une barre qui se remplit jusqu'au prochain cadeau (pas de cases à cocher). */
+function pointsGauge(o: BannerOptions, W: number, H: number, top?: number): string {
+  const g = gaugeGeom(o, W, H, top);
+  const ratio = Math.max(0, Math.min(1, o.total > 0 ? o.filled / o.total : 0));
+  const r = g.h / 2;
+  const giftR = r - 4;
+  const trackX = g.x + 12;
+  const trackW = g.w - 24 - giftR * 2 - 8;
+  const trackY = g.y + g.h / 2 - 4;
+  const glass = `<defs><clipPath id="gband"><rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="${r}"/></clipPath><filter id="gsoft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="7"/></filter></defs>
+    <g clip-path="url(#gband)">${backdrop(o, W, H, "gbg", 'filter="url(#gsoft)"')}<rect width="${W}" height="${H}" fill="#ffffff" fill-opacity=".14"/><rect width="${W}" height="${H}" fill="${o.brand}" fill-opacity=".18"/></g>
+    <rect x="${g.x + 0.4}" y="${g.y + 0.4}" width="${g.w - 0.8}" height="${g.h - 0.8}" rx="${r}" fill="none" stroke="#ffffff" stroke-opacity=".42" stroke-width=".8"/>`;
+  const track = `<rect x="${trackX}" y="${trackY}" width="${trackW}" height="8" rx="4" fill="#ffffff" fill-opacity=".28"/>`;
+  const fill = ratio > 0 ? `<rect x="${trackX}" y="${trackY}" width="${Math.max(8, trackW * ratio)}" height="8" rx="4" fill="${o.accent}"/>` : "";
+  const gx = g.x + g.w - 12 - giftR;
+  const gy = g.y + g.h / 2;
+  const ready = ratio >= 1;
+  const gift = `<circle cx="${gx}" cy="${gy}" r="${giftR}" fill="${o.accent}" fill-opacity="${ready ? 1 : 0.22}" stroke="${o.accent}" stroke-width="1.3"/>${icon("gift", gx, gy, giftR * 1.2, ready ? inkOn(o.accent) : o.accent, 1, 1.8)}`;
+  return `${glass}${track}${fill}${gift}`;
 }
 
 /** Bandeau de tampons en « verre dépoli » posé sur la photo. */
 function glassBand(o: BannerOptions, W: number, H: number, top?: number): string {
+  if (o.gauge) return pointsGauge(o, W, H, top);
   const total = Math.max(1, Math.min(20, o.total));
   const rows = total > 12 ? 2 : 1;
   const perRow = Math.ceil(total / rows);
@@ -142,12 +250,15 @@ function glassBand(o: BannerOptions, W: number, H: number, top?: number): string
   const by =
     o.stampsY != null
       ? Math.min(H - bandH - 2, Math.max(2, o.stampsY * H - bandH / 2))
-      : (top ?? H - bandH - (H > 130 ? 12 : 9));
+      : (top ?? H - bandH - (H > 200 ? 26 : H > 130 ? 12 : 9));
   const blur = `<clipPath id="band"><rect x="${bx}" y="${by}" width="${bandW}" height="${bandH}" rx="${Math.min(bandH / 2, 22)}"/></clipPath>
     <filter id="soft" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="7"/></filter>`;
   const glass = `<g clip-path="url(#band)">${backdrop(o, W, H, "bandbg", 'filter="url(#soft)"')}<rect width="${W}" height="${H}" fill="#ffffff" fill-opacity=".14"/><rect width="${W}" height="${H}" fill="${o.brand}" fill-opacity=".18"/></g>
     <rect x="${bx + 0.4}" y="${by + 0.4}" width="${bandW - 0.8}" height="${bandH - 0.8}" rx="${Math.min(bandH / 2, 22)}" fill="none" stroke="#ffffff" stroke-opacity=".42" stroke-width=".8"/>`;
   const ink = mix(o.brand, "#000000", 0.15);
+  const look: StampLook = o.look ?? "icons";
+  const logoOk = look === "logo" && !!o.logo;
+  const defs: string[] = [];
   const cells = Array.from({ length: total }, (_, i) => {
     const row = Math.floor(i / perRow);
     const inRow = row === rows - 1 ? total - perRow * (rows - 1) : perRow;
@@ -159,16 +270,50 @@ function glassBand(o: BannerOptions, W: number, H: number, top?: number): string
     const isGift = o.rewardOnLast && i === total - 1;
     const id = isGift ? "gift" : o.icons.length > 0 ? o.icons[i % o.icons.length] : "check";
     const s = r * 1.12;
+    if (!isGift && look === "classic") return classicStamp(cx, cy, r, i, filled, o.accent);
+    if (!isGift && logoOk) {
+      defs.push(`<clipPath id="lc${i}"><circle cx="${cx}" cy="${cy}" r="${r * 0.88}"/></clipPath>`);
+      return logoStamp(cx, cy, r, filled, o.logo!, `lc${i}`);
+    }
+    if (filled && isGift) {
+      // Cadeau gagné : la case s'illumine
+      defs.push(`<filter id="gg${i}" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="${(r * 0.45).toFixed(2)}"/></filter>`);
+      return `<circle cx="${cx}" cy="${cy}" r="${r * 1.25}" fill="${o.accent}" opacity=".75" filter="url(#gg${i})"/><circle cx="${cx}" cy="${cy}" r="${r}" fill="${o.accent}"/>${icon(id, cx, cy, s, inkOn(o.accent), 1, 1.9)}`;
+    }
     if (filled) {
       const bg = isGift ? o.accent : "#ffffff";
       return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${bg}"/>${icon(id, cx, cy, s, isGift ? mix(o.accent, "#000000", 0.55) : ink, 1, 1.9)}`;
     }
     if (isGift) {
-      return `<circle cx="${cx}" cy="${cy}" r="${r - 0.5}" fill="${o.accent}" fill-opacity=".22" stroke="${o.accent}" stroke-width="1.3"/>${icon(id, cx, cy, s, o.accent, 1, 1.7)}`;
+      // La case cadeau se voit toujours (c'est elle qui donne envie), même sur une photo chargée
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${o.accent}" fill-opacity=".9"/>${icon(id, cx, cy, s, inkOn(o.accent), 1, 1.8)}`;
     }
     return `<circle cx="${cx}" cy="${cy}" r="${r - 0.5}" fill="#ffffff" fill-opacity=".06" stroke="#ffffff" stroke-opacity=".7" stroke-width="1"/>${icon(id, cx, cy, s, "#ffffff", 0.62, 1.5)}`;
   }).join("");
-  return `<defs>${blur}</defs>${glass}${cells}`;
+  return `<defs>${blur}${defs.join("")}</defs>${glass}${cells}`;
+}
+
+/**
+ * Tampon classique : un rond plein à la couleur du cadeau, avec une coche légèrement penchée
+ * (comme un vrai coup de tampon). Case vide : un simple cercle fin.
+ */
+function classicStamp(cx: number, cy: number, r: number, i: number, filled: boolean, accent: string): string {
+  if (!filled) {
+    return `<circle cx="${cx}" cy="${cy}" r="${r - 0.5}" fill="#ffffff" fill-opacity=".08" stroke="#ffffff" stroke-opacity=".75" stroke-width="1.1"/>`;
+  }
+  const tilt = [-14, 9, -6, 13, -10, 5, -3, 11][i % 8];
+  return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${accent}"/><g transform="rotate(${tilt} ${cx} ${cy})">${icon("check", cx, cy, r * 1.15, inkOn(accent), 1, 2.6)}</g>`;
+}
+
+/** Tampon « logo » : le logo du commerce dans un rond blanc ; case vide = le logo en transparence. */
+function logoStamp(cx: number, cy: number, r: number, filled: boolean, logo: LogoArt, clip: string): string {
+  // Logo carré : il remplit le rond ; logo allongé : il prend toute la largeur du rond
+  const box = logo.ratio > 1.4 ? r * 1.7 : r * 1.4;
+  const w = logo.ratio >= 1 ? box : box * logo.ratio;
+  const h = logo.ratio >= 1 ? box / logo.ratio : box;
+  const img = `<image href="${esc(logo.href)}" x="${(cx - w / 2).toFixed(2)}" y="${(cy - h / 2).toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" preserveAspectRatio="xMidYMid meet" clip-path="url(#${clip})"${filled ? "" : ' opacity=".3"'}/>`;
+  if (filled) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#ffffff"/>${img}`;
+  return `<circle cx="${cx}" cy="${cy}" r="${r - 0.5}" fill="#ffffff" fill-opacity=".1" stroke="#ffffff" stroke-opacity=".7" stroke-width="1"/>${img}`;
 }
 
 /** Style minimal : une rangée de points fins en bas à gauche. */
@@ -176,7 +321,7 @@ function minimalDots(o: BannerOptions, W: number, H: number, fullH = H): string 
   const total = Math.max(1, Math.min(30, o.total));
   const gap = Math.min(15, (W - 40) / total);
   const r = Math.min(4.2, gap * 0.3);
-  const y = o.stampsY != null ? Math.min(fullH - 8, Math.max(8, o.stampsY * fullH)) : H - 16;
+  const y = o.stampsY != null ? Math.min(fullH - 8, Math.max(8, o.stampsY * fullH)) : H - (H > 200 ? 30 : 16);
   return Array.from({ length: total }, (_, i) => {
     const x = 20 + i * gap + r;
     const isGift = o.rewardOnLast && i === total - 1;
@@ -345,9 +490,11 @@ export function buildBannerSvg(o: BannerOptions, format: BannerFormat, width?: n
       : o.style === "minimal"
         ? minimalDots(o, W, H)
         : o.style === "track"
-          ? trackLayer(o, { x: W * 0.2, y: 3, w: W * 0.6, h: H - 6 }) + streakPips(o, W * 0.12, H - 14, 12)
+          ? H > 200
+            ? trackLayer(o, { x: W * 0.1, y: 20, w: W * 0.8, h: H - 56 }) + streakPips(o, W / 2, H - 22, 14)
+            : trackLayer(o, { x: W * 0.2, y: 3, w: W * 0.6, h: H - 6 }) + streakPips(o, W * 0.12, H - 14, 12)
           : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${backdrop(o, W, H, "bg")}${scrim}${progress}${layersSvg(o.layers, format, W, H)}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width ?? W}" height="${height ?? H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${backdrop(o, W, H, "bg")}${scrim}${progress}${layersSvg(o.layers, format as ArtFormat, W, H, { logo: o.logo, uid })}</svg>`;
   return prefixIds(svg, uid);
 }
 
@@ -386,20 +533,37 @@ export function buildPosterSvg(
     <rect width="${W}" height="${H * 0.26}" fill="url(#top)"/>
     <rect y="${H * 0.58}" width="${W}" height="${H * 0.42}" fill="url(#bottom)"/>
     ${stamps}
-    ${layersSvg(o.layers, "poster", W, H)}
+    ${layersSvg(o.layers, "poster", W, H, { logo: o.logo, uid })}
   </svg>`;
   return prefixIds(svg, uid);
 }
 
 /* ============================ CALQUES LIBRES (éditeur visuel) ============================ */
 
-/** Un texte ou un sticker posé sur la photo, au format demandé. */
-export function layerSvg(layer: ArtLayer, format: ArtFormat, W: number, H: number): string {
+/** Un texte, un sticker, le logo ou la mascotte posé sur la photo, au format demandé. */
+export function layerSvg(layer: ArtLayer, format: ArtFormat, W: number, H: number, ctx: LayerContext = {}): string {
   const pos = layerPos(layer, format);
   const m = Math.min(W, H);
   const X = (pos.x * W).toFixed(2);
   const Y = (pos.y * H).toFixed(2);
   const rot = layer.rot || 0;
+  if (layer.kind === "logo") {
+    if (!ctx.logo) return "";
+    const h = (pos.size / 100) * m;
+    const w = h * ctx.logo.ratio;
+    const pad = h * 0.18;
+    const bg = layer.bg
+      ? `<rect x="${(Number(X) - w / 2 - pad).toFixed(2)}" y="${(Number(Y) - h / 2 - pad).toFixed(2)}" width="${(w + pad * 2).toFixed(2)}" height="${(h + pad * 2).toFixed(2)}" rx="${(pad * 1.4).toFixed(2)}" fill="${layer.bg}"/>`
+      : "";
+    // Sans pastille : une ombre douce pour que le logo reste lisible sur une photo
+    const fid = `ls-${layer.id}`;
+    const shadow = layer.bg ? "" : `<defs><filter id="${fid}" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="${(h * 0.03).toFixed(2)}" stdDeviation="${(h * 0.05).toFixed(2)}" flood-color="#000" flood-opacity=".45"/></filter></defs>`;
+    return `<g transform="rotate(${rot} ${X} ${Y})">${shadow}${bg}<image href="${esc(ctx.logo.href)}" x="${(Number(X) - w / 2).toFixed(2)}" y="${(Number(Y) - h / 2).toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" preserveAspectRatio="xMidYMid meet"${layer.bg ? "" : ` filter="url(#${fid})"`}/></g>`;
+  }
+  if (layer.kind === "mascot") {
+    const h = (pos.size / 100) * m;
+    return `<g transform="rotate(${rot} ${X} ${Y})">${mascotSvg((layer.pose ?? "wave") as MascotPose, Number(X), Number(Y), h, `${ctx.uid ?? "m"}-${layer.id}`)}</g>`;
+  }
   if (layer.kind === "icon") {
     const D = (pos.size / 100) * m;
     const bg = layer.bg ? `<circle cx="${X}" cy="${Y}" r="${(D / 2).toFixed(2)}" fill="${layer.bg}"/>` : "";
@@ -420,19 +584,20 @@ export function layerSvg(layer: ArtLayer, format: ArtFormat, W: number, H: numbe
   return `<g transform="translate(${X} ${Y}) rotate(${rot}) scale(${k.toFixed(5)} ${(-k).toFixed(5)}) translate(${(-w / 2).toFixed(1)} ${(-cy).toFixed(1)})">${pill}<path d="${layer.d}" fill="${layer.color}"/></g>`;
 }
 
-export function layersSvg(layers: ArtLayer[] | undefined, format: ArtFormat, W: number, H: number): string {
+export function layersSvg(layers: ArtLayer[] | undefined, format: ArtFormat, W: number, H: number, ctx: LayerContext = {}): string {
   if (!layers || layers.length === 0) return "";
-  return layers.map((l) => layerSvg(l, format, W, H)).join("");
+  return layers.map((l) => layerSvg(l, format, W, H, ctx)).join("");
 }
 
 /** Cadre de la bande de tampons (pour la poignée de l'éditeur). null = pas de bande déplaçable. */
 export function stampsBox(o: BannerOptions, format: ArtFormat): { x: number; y: number; w: number; h: number } | null {
   const { w: W, h: H } = FORMATS[format];
   if (!o.total || o.style === "none" || o.style === "track") return null;
+  if (o.gauge && o.style === "glass") return gaugeGeom(o, W, H, format === "poster" ? 58 : undefined);
   if (o.style === "minimal") {
     const total = Math.max(1, Math.min(30, o.total));
     const gap = Math.min(15, (W - 40) / total);
-    const y = o.stampsY != null ? Math.min(H - 8, Math.max(8, o.stampsY * H)) : format === "poster" ? 70 : H - 16;
+    const y = o.stampsY != null ? Math.min(H - 8, Math.max(8, o.stampsY * H)) : format === "poster" ? 70 : H - (H > 200 ? 30 : 16);
     return { x: 14, y: y - 9, w: total * gap + 12, h: 18 };
   }
   const total = Math.max(1, Math.min(20, o.total));
@@ -445,14 +610,26 @@ export function stampsBox(o: BannerOptions, format: ArtFormat): { x: number; y: 
   const by =
     o.stampsY != null
       ? Math.min(H - bandH - 2, Math.max(2, o.stampsY * H - bandH / 2))
-      : (top ?? H - bandH - (H > 130 ? 12 : 9));
+      : (top ?? H - bandH - (H > 200 ? 26 : H > 130 ? 12 : 9));
   return { x: (W - bandW) / 2, y: by, w: bandW, h: bandH };
 }
 
 /** Cadre d'un calque (centre, largeur, hauteur, rotation) dans le format demandé — pour la sélection dans l'éditeur. */
-export function layerBox(layer: ArtLayer, format: ArtFormat, W: number, H: number): { cx: number; cy: number; w: number; h: number; rot: number } {
+export function layerBox(
+  layer: ArtLayer,
+  format: ArtFormat,
+  W: number,
+  H: number,
+  ctx: LayerContext = {},
+): { cx: number; cy: number; w: number; h: number; rot: number } {
   const pos = layerPos(layer, format);
   const m = Math.min(W, H);
+  if (layer.kind === "logo" || layer.kind === "mascot") {
+    const h = (pos.size / 100) * m;
+    const ratio = layer.kind === "logo" ? (ctx.logo?.ratio ?? 1) : mascotRatio((layer.pose ?? "wave") as MascotPose);
+    const pad = layer.kind === "logo" && layer.bg ? h * 0.36 : 0;
+    return { cx: pos.x * W, cy: pos.y * H, w: h * ratio + pad, h: h + pad, rot: layer.rot || 0 };
+  }
   if (layer.kind === "icon") {
     const D = (pos.size / 100) * m;
     return { cx: pos.x * W, cy: pos.y * H, w: D, h: D, rot: layer.rot || 0 };

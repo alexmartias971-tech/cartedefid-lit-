@@ -4,7 +4,7 @@
  * toutes les versions de la carte disent exactement la même chose.
  */
 import { buildStripSvg, STRIP_H, STRIP_W, type StripOptions } from "@/lib/art";
-import { buildBannerSvg, buildPosterSvg, FORMATS, LINE_ICONS, layersSvg, type BannerFormat, type BannerOptions, type BannerStyle } from "@/lib/visual";
+import { buildBannerSvg, buildPosterSvg, FORMATS, LINE_ICONS, layersSvg, type BannerFormat, type BannerOptions, type BannerStyle, type LogoArt } from "@/lib/visual";
 import { parseLayout, type ArtFormat, type CardLayout, type FieldSlot, type SlotConfig } from "@/lib/layout";
 import type { CatalogReward, Coupon, Program, RewardMode, Tier } from "@/lib/types";
 
@@ -73,6 +73,8 @@ export type CardState = {
   balanceValue: string;
   /** Pour les tampons : combien de cases remplies / au total. */
   stamps: { filled: number; total: number } | null;
+  /** Ce qu'il reste avant le prochain cadeau (« ENCORE 7 passages »), ou le cadeau prêt. null = sans objet (cagnotte). */
+  remaining: { label: string; value: string } | null;
   /** Phrase d'avancement affichée sur la carte. */
   sentence: string;
   /** Règle du programme en une phrase. */
@@ -138,11 +140,20 @@ function computeBaseState(
     const nextReward = activeCatalog.find((r) => r.cost > points);
     let sentence = `${points} point${points > 1 ? "s" : ""}.`;
     if (affordable.length > 0) sentence = `🎁 Tu peux obtenir : ${affordable[affordable.length - 1].name} ! Demande en caisse.`;
-    else if (nextReward) sentence = `Plus que ${nextReward.cost - points} points pour : ${nextReward.name}.`;
+    else if (nextReward) {
+      const euros = Math.ceil((nextReward.cost - points) / Math.max(0.01, Number(program.points_per_euro) || 1));
+      sentence = `Plus que ${nextReward.cost - points} points (environ ${euros} € d'achats) avant ton cadeau : ${nextReward.name}.`;
+    }
     return {
       balanceLabel: "POINTS",
       balanceValue: String(points),
       stamps: null,
+      remaining:
+        affordable.length > 0
+          ? { label: "CADEAU", value: "Prêt 🎁" }
+          : nextReward
+            ? { label: "ENCORE", value: `${nextReward.cost - points} pts` }
+            : null,
       sentence,
       rule: `${Number(program.points_per_euro)} point${Number(program.points_per_euro) > 1 ? "s" : ""} par euro dépensé.`,
       tier,
@@ -158,6 +169,7 @@ function computeBaseState(
       balanceLabel: "CAGNOTTE",
       balanceValue: formatEuro(balance),
       stamps: null,
+      remaining: null,
       sentence:
         balance > 0
           ? `Tu as ${formatEuro(balance)} à dépenser en caisse.`
@@ -170,33 +182,46 @@ function computeBaseState(
     };
   }
 
-  // Tampons
+  // Tampons : la phrase change selon l'avancement (on valorise ce qui est déjà fait, puis on crée l'envie près du but)
   const filled = Math.min(card.stamps_count, threshold);
   const left = threshold - card.stamps_count;
-  let sentence = `Merci pour ta visite ! ${filled}/${threshold} tampons.`;
+  const reward = program.reward_description;
   const track = program.progress_style === "track";
+  const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? "s" : ""}`;
+  let sentence: string;
   if (card.stamps_count >= threshold)
     sentence = track
-      ? `🏆 Tour bouclé ! ${program.reward_description} : montre ta carte en caisse.`
-      : `🎁 Cadeau débloqué : ${program.reward_description} ! Montre ta carte en caisse.`;
+      ? `🏆 Tour bouclé ! ${reward} : montre ta carte en caisse.`
+      : `🎁 Ton cadeau t'attend : ${reward} ! Montre ta carte en caisse.`;
   else if (card.stamps_count === 0)
-    sentence =
-      track
-        ? `🏁 1 session = 1 secteur. Les ${threshold} secteurs = 1 tour = ${program.reward_description}.`
-        : `${threshold} tampons = ${program.reward_description}.`;
+    sentence = track
+      ? `🏁 1 session = 1 secteur. Les ${threshold} secteurs = 1 tour = ${reward}.`
+      : card.lifetime_visits > 0
+        ? `Régale-toi ! Une nouvelle carte commence : ${threshold} tampons = ${reward}.`
+        : `${threshold} tampons = ${reward}. C'est parti !`;
   else if (track)
     sentence =
       left === 1
-        ? `🏁 Dernier secteur ! Ta prochaine session boucle le tour = ${program.reward_description}.`
-        : `🏁 1 session = 1 secteur · encore ${left} pour boucler le tour = ${program.reward_description}.`;
-  else if (left === 1) sentence = `Plus qu'un passage avant ton cadeau : ${program.reward_description} !`;
-  else sentence = `Plus que ${left} passages avant ton cadeau : ${program.reward_description}.`;
+        ? `🏁 Dernier secteur ! Ta prochaine session boucle le tour = ${reward}.`
+        : `🏁 1 session = 1 secteur · encore ${left} pour boucler le tour = ${reward}.`;
+  // Avant la moitié, on montre ce qui est acquis ; après, ce qui reste (c'est ce qui motive le plus, Koo & Fishbach 2012)
+  else if (left === 1) sentence = `Plus qu'un tampon avant ton cadeau : ${reward} !`;
+  else if (left <= threshold / 2) sentence = `Plus que ${left} tampons avant ton cadeau : ${reward}.`;
+  else if (!card.lifetime_visits) sentence = `Bienvenue ! ${plural(filled, "tampon")} offert${filled > 1 ? "s" : ""} pour bien démarrer. Ton cadeau au ${threshold}e tampon : ${reward}.`;
+  else sentence = `Déjà ${plural(filled, "tampon")} ! Ton cadeau au ${threshold}e tampon : ${reward}.`;
+  const firstHalf = card.stamps_count < threshold && left > threshold / 2;
   return {
     balanceLabel: track ? "SECTEURS" : "TAMPONS",
     balanceValue: `${filled}/${threshold}`,
     stamps: { filled, total: threshold },
+    remaining:
+      card.stamps_count >= threshold
+        ? { label: "CADEAU", value: "Prêt 🎁" }
+        : firstHalf
+          ? { label: track ? "SECTEURS" : "TAMPONS", value: `${filled}/${threshold}` }
+          : { label: "ENCORE", value: plural(left, track ? "secteur" : "tampon") },
     sentence,
-    rule: `${threshold} tampons = ${program.reward_description}.`,
+    rule: `${threshold} tampons = ${reward}.`,
     tier,
     nextTier,
     rewardReady: card.stamps_count >= threshold,
@@ -204,12 +229,36 @@ function computeBaseState(
   };
 }
 
+/**
+ * Les 2 compteurs du recto Android, courts : Google conseille 9 caractères pour le titre et 7 pour la valeur.
+ * Le cadeau est déjà écrit dans le titre de la carte (« 10 passages = 1 café offert »).
+ */
+export function googleFields(
+  state: CardState,
+  mode: RewardMode,
+  balanceLabel: string,
+  coupons: number,
+): { left: { label: string; value: string }; right: { label: string; value: string } | null } {
+  // Tampons : quand la carte est pleine, le cadeau prend la place du compteur. Points : le solde reste toujours visible.
+  const left = state.rewardReady && mode === "stamps" ? { label: "CADEAU", value: "Prêt 🎁" } : { label: balanceLabel.slice(0, 9), value: state.balanceValue };
+  let right: { label: string; value: string } | null = null;
+  if (state.rewardReady && mode === "points") right = { label: "CADEAU", value: "Prêt 🎁" };
+  else if (coupons > 0) right = { label: "OFFRES", value: String(coupons) };
+  else if (state.rank) right = { label: "RANG", value: `P${state.rank.pos}` };
+  else if (state.lap) right = { label: "RECORD", value: state.lap };
+  else if (state.streak && state.streak.count > 0) right = { label: "SÉRIE", value: `${state.streak.count} sem.` };
+  else if (state.tier) right = { label: "NIVEAU", value: state.tier.name };
+  else if (!state.rewardReady && state.remaining?.label === "ENCORE") right = { label: "ENCORE", value: state.remaining.value.replace(/ (tampons?|secteurs?)$/, "") };
+  return { left, right };
+}
+
 /** Phrase de la série (à afficher sous la carte ou en notification). */
 export function streakSentence(state: CardState, bonus: number, unit: string): string | null {
   const st = state.streak;
   if (!st) return null;
   const toGoal = st.goal - (st.count % st.goal);
-  if (st.count === 0) return `🔥 Viens chaque semaine : ${st.goal} semaines d'affilée = ${bonus} ${unit} en bonus.`;
+  const units = unit === "€" || bonus > 1 ? unit : unit.replace(/s$/, "");
+  if (st.count === 0) return `🔥 Viens chaque semaine : ${st.goal} semaines d'affilée = ${bonus} ${units} en bonus.`;
   if (st.thisWeek) return `🔥 Série de ${st.count} semaine${st.count > 1 ? "s" : ""} ! Encore ${toGoal} pour ton bonus. À la semaine prochaine !`;
   return `🔥 Ta série de ${st.count} semaine${st.count > 1 ? "s" : ""} continue si tu viens avant dimanche soir !`;
 }
@@ -227,7 +276,7 @@ export function secondaryField(
   catalog: CatalogReward[],
 ): { label: string; value: string } | null {
   if (program.mode === "stamps") return { label: "CADEAU", value: program.reward_description };
-  if (program.mode === "cashback") return { label: "CASHBACK", value: `${Number(program.cashback_percent)} %` };
+  if (program.mode === "cashback") return { label: "CHAQUE ACHAT", value: `${Number(program.cashback_percent)} % en cagnotte` };
   const next = [...catalog].filter((r) => r.is_active).sort((a, b) => a.cost - b.cost).find((r) => r.cost > card.points_balance);
   return next ? { label: `À ${next.cost} PTS`, value: next.name } : null;
 }
@@ -370,13 +419,33 @@ export function isPhotoStyle(style: CardDesign["progressStyle"]) {
 
 type Progress = { total: number; filled: number; streak?: { count: number; goal: number } | null };
 
+/** Images déjà prêtes pour le dessin : le logo (avec son format) et le format de la photo de fond. */
+export type ArtAssets = { logo?: LogoArt | null; photoRatio?: number | null };
+
 /** Options du moteur photo à partir du design (et d'une photo déjà convertie côté serveur). */
+/** Carte pas encore enregistrée avec l'éditeur v2 (le bandeau Google garde alors l'ancien format 3:1). */
+export function isLegacyLayout(layout: CardLayout | undefined): boolean {
+  return !layout?.look;
+}
+
+/**
+ * Format de l'image Android : l'ancien bandeau 3:1 tant que la carte n'est pas passée par l'éditeur v2,
+ * et toujours pour les anciens styles dessinés (grille, collection, remplissage), qui ne rempliraient pas l'image presque carrée.
+ */
+export function googleBannerFormat(design: Pick<CardDesign, "layout" | "progressStyle" | "mode">): "google" | "googleLegacy" {
+  const drawn = !(isPhotoStyle(design.progressStyle) || design.mode === "cashback" || design.progressStyle === "none");
+  return isLegacyLayout(design.layout) || drawn ? "googleLegacy" : "google";
+}
+
 export function bannerOptions(
   design: CardDesign,
   progress: Progress,
   photo?: string | null,
-  format: ArtFormat = "apple",
+  fmt: ArtFormat | BannerFormat = "apple",
+  assets: ArtAssets = {},
 ): BannerOptions {
+  // L'ancien bandeau Android (3:1) reprend les réglages faits pour Android (position des tampons, cadrage)
+  const format = (fmt === "googleLegacy" ? "google" : fmt) as ArtFormat;
   const style: BannerStyle =
     design.mode === "cashback"
       ? "none"
@@ -401,6 +470,12 @@ export function bannerOptions(
     streak: progress.streak ?? null,
     layers: design.layout?.layers ?? [],
     stampsY: design.layout?.stamps?.[format] ?? null,
+    look: design.layout?.look,
+    fill: design.layout?.fill,
+    gauge: design.mode === "points",
+    logo: assets.logo ?? null,
+    crop: design.layout?.crop?.[format] ?? null,
+    photoRatio: assets.photoRatio ?? null,
   };
 }
 
@@ -415,15 +490,16 @@ export function cardBannerSvg(
   width: number,
   height: number,
   uid: string,
-  hrefs?: { decor?: string | null; icon?: string | null; iconEmpty?: string | null },
+  hrefs?: { decor?: string | null; icon?: string | null; iconEmpty?: string | null } & ArtAssets,
 ): string {
+  const assets: ArtAssets = { logo: hrefs?.logo, photoRatio: hrefs?.photoRatio };
   if (isPhotoStyle(design.progressStyle) || design.mode === "cashback" || design.progressStyle === "none") {
-    return buildBannerSvg(bannerOptions(design, progress, hrefs?.decor, format), format, width, height, uid);
+    return buildBannerSvg(bannerOptions(design, progress, hrefs?.decor, format, assets), format, width, height, uid);
   }
   const { w, h } = FORMATS[format];
   const legacy = buildStripSvg(stripOptions(design, progress, hrefs), STRIP_W, STRIP_H, uid);
   const inner = legacy.replace(/^<svg /, `<svg x="0" y="${(h - (w * STRIP_H) / STRIP_W) / 2}" `).replace(/width="\d+" height="\d+"/, `width="${w}" height="${(w * STRIP_H) / STRIP_W}"`);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${design.backgroundColor}"/>${inner}${layersSvg(design.layout?.layers, format, w, h)}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${design.backgroundColor}"/>${inner}${layersSvg(design.layout?.layers, format as ArtFormat, w, h, { logo: assets.logo, uid })}</svg>`;
 }
 
 /** Visuel plein format de la carte poster iOS 27 (photo du niveau si elle existe). */
@@ -434,14 +510,24 @@ export function cardPosterSvg(
   uid: string,
   photo?: string | null,
   progress?: Progress,
+  assets: ArtAssets = {},
 ): string {
-  const base = bannerOptions(design, progress ?? { total: 0, filled: 0 }, photo !== undefined ? photo : design.stripImageUrl, "poster");
+  const base = bannerOptions(design, progress ?? { total: 0, filled: 0 }, photo !== undefined ? photo : design.stripImageUrl, "poster", assets);
   return buildPosterSvg(progress ? base : { ...base, style: "none" }, width, height, uid);
 }
 
-/** Photo à utiliser : celle du niveau du client, sinon la photo principale. */
-export function photoFor(program: Pick<Program, "strip_image_url">, tier: Tier | null): string | null {
-  return tier?.image_url || program.strip_image_url;
+/**
+ * Photo à utiliser : celle du niveau du client, sinon le visuel propre à ce téléphone (s'il y en a un),
+ * sinon la photo principale (recadrée automatiquement).
+ */
+export function photoFor(
+  program: Pick<Program, "strip_image_url"> & Partial<Pick<Program, "card_layout">>,
+  tier: Tier | null,
+  format?: ArtFormat,
+): string | null {
+  if (tier?.image_url) return tier.image_url;
+  const own = format ? layoutOf({ card_layout: program.card_layout }).bg?.[format] : undefined;
+  return own || program.strip_image_url;
 }
 
 /** Points de progression en texte (affichés sur la carte poster iOS 27). */
@@ -459,7 +545,7 @@ export function programPitch(
       ? `${Number(program.points_per_euro)} point${Number(program.points_per_euro) > 1 ? "s" : ""} par euro, échangeables contre des cadeaux`
       : program.mode === "cashback"
         ? `${Number(program.cashback_percent)} % de tes achats reversés sur ta cagnotte`
-        : `${program.reward_threshold} passages = ${program.reward_description}`;
+        : `${program.reward_threshold} tampons = ${program.reward_description}`;
   return program.welcome_offer ? `${base} · Bienvenue : ${program.welcome_offer}` : base;
 }
 
@@ -527,15 +613,20 @@ export function slotField(
 ): Field | null {
   if (!cfg) return null;
   const title = (fallback: string) => (cfg.label ? cfg.label.toUpperCase() : fallback);
-  const k = `z${key}`;
+  // La source fait partie de la clé : changer l'information d'une zone crée un nouveau champ (aucune notification aux clients)
+  const k = `z${key}-${cfg.src}`;
   switch (cfg.src) {
     case "balance":
+      return { key: k, label: title(labels.balance), value: state.balanceValue };
+    case "remaining":
+      if (ctx.mode === "points" && !state.rewardReady) return { key: k, label: title(labels.balance), value: state.balanceValue };
+      if (state.remaining) return { key: k, label: title(state.remaining.label), value: state.remaining.value };
       return { key: k, label: title(labels.balance), value: state.balanceValue };
     case "customer":
       return { key: k, label: title(labels.customer), value: ctx.customerName };
     case "reward":
       if (ctx.mode === "stamps") return { key: k, label: title(labels.reward ?? "CADEAU"), value: ctx.rewardDescription };
-      if (ctx.mode === "cashback") return { key: k, label: title("CASHBACK"), value: `${Number(ctx.cashbackPercent)} %` };
+      if (ctx.mode === "cashback") return { key: k, label: title("CHAQUE ACHAT"), value: `${Number(ctx.cashbackPercent)} % en cagnotte` };
       return ctx.nextReward ? { key: k, label: title(`À ${ctx.nextReward.cost} PTS`), value: ctx.nextReward.name } : null;
     case "tier":
       return state.tier ? { key: k, label: title("NIVEAU"), value: state.tier.name, changeMessage: "Nouveau niveau : %@ !" } : null;
@@ -580,6 +671,18 @@ export function resolveSlots(
 }
 
 /**
+ * Disposition automatique (cartes enregistrées avant l'éditeur visuel), au même format que les zones :
+ * permet à l'aperçu de n'avoir qu'une seule façon de dessiner la carte.
+ */
+export function autoSlots(design: Pick<CardDesign, "labelBalance" | "labelCustomer" | "labelReward">, state: CardState, customerName: string): ResolvedSlots {
+  const labels = fieldLabels(design, state);
+  const pf = posterFields(state, labels, customerName);
+  const bottom: (Field | null)[] = [...pf.primary.slice(0, 4)];
+  while (bottom.length < 4) bottom.push(null);
+  return { top: pf.header, bottom, footer: pf.footer };
+}
+
+/**
  * Les règles de la carte en phrases simples (pour le tableau de bord, le guide et le dos de la carte).
  */
 export function describeProgram(
@@ -594,6 +697,7 @@ export function describeProgram(
 ): { icon: string; title: string; text: string }[] {
   const days = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
   const unit = program.mode === "stamps" ? (program.progress_style === "track" ? "secteur" : "tampon") : program.mode === "points" ? "point" : "€";
+  const units = (n: number) => (unit === "€" ? `${n} €` : `${n} ${unit}${n > 1 ? "s" : ""}`);
   const out: { icon: string; title: string; text: string }[] = [];
   if (program.mode === "stamps") {
     out.push(
@@ -603,16 +707,39 @@ export function describeProgram(
             title: "Progression",
             text: `Chaque passage scanné allume 1 secteur du circuit. ${program.reward_threshold} secteurs = 1 tour bouclé = ${program.reward_description}. Puis un nouveau tour commence.`,
           }
-        : { icon: "🎟️", title: "Progression", text: `Chaque passage scanné = 1 tampon. ${program.reward_threshold} tampons = ${program.reward_description}.` },
+        : {
+            icon: "🎟️",
+            title: "Comment ça marche",
+            text: `Un tampon à chaque passage, quand on scanne ta carte en caisse. Au ${program.reward_threshold}e : ${program.reward_description}. Puis une nouvelle carte commence.`,
+          },
     );
-    out.push({ icon: "🛡️", title: "Anti-triche", text: `${program.max_stamps_per_day} ${unit}(s) maximum par jour et par client, ajoutés uniquement par le commerçant.` });
+    out.push({
+      icon: "👍",
+      title: "Bon à savoir",
+      text:
+        program.max_stamps_per_day > 1
+          ? `Jusqu'à ${program.max_stamps_per_day} ${unit}s par jour.`
+          : `Un ${unit} par jour au maximum, même si tu passes plusieurs fois.`,
+    });
   } else if (program.mode === "points") {
-    out.push({ icon: "⭐", title: "Progression", text: `${Number(program.points_per_euro)} point(s) par euro dépensé, échangeables contre les cadeaux du catalogue.` });
+    out.push({
+      icon: "⭐",
+      title: "Comment ça marche",
+      text: `${Number(program.points_per_euro)} point${Number(program.points_per_euro) > 1 ? "s" : ""} par euro dépensé. Échange-les contre les cadeaux de la liste, quand tu veux.`,
+    });
   } else {
-    out.push({ icon: "💶", title: "Progression", text: `${Number(program.cashback_percent)} % de chaque achat crédité sur la cagnotte du client.` });
+    out.push({
+      icon: "💶",
+      title: "Comment ça marche",
+      text: `${Number(program.cashback_percent)} % de chaque achat s'ajoutent à ta cagnotte. Utilise-la en réduction quand tu veux.`,
+    });
   }
   if (program.signup_bonus > 0 && program.mode !== "cashback") {
-    out.push({ icon: "🎁", title: "Départ", text: `${program.signup_bonus} ${unit}(s) offert(s) à l'inscription : la carte ne démarre jamais vide.` });
+    out.push({
+      icon: "🎁",
+      title: "Cadeau de bienvenue",
+      text: `${program.signup_bonus} ${unit}${program.signup_bonus > 1 ? "s" : ""} offert${program.signup_bonus > 1 ? "s" : ""} dès l'inscription.`,
+    });
   }
   if (program.tiers_enabled && tiers.length > 0) {
     const sorted = [...tiers].sort((a, b) => Number(a.min_value) - Number(b.min_value));
@@ -620,27 +747,27 @@ export function describeProgram(
       icon: "🏆",
       title: "Niveaux",
       text: sorted
-        .map((t) => `${t.name} dès ${program.tier_basis === "spend" ? formatEuro(Number(t.min_value)) + " dépensés" : `${Number(t.min_value)} passage(s)`}${t.perk ? ` (${t.perk})` : ""}`)
-        .join(" → ") + ". Le niveau se met à jour tout seul après chaque passage.",
+        .map((t) => `${t.name} dès ${program.tier_basis === "spend" ? formatEuro(Number(t.min_value)) + " dépensés" : `${Number(t.min_value)} passage${Number(t.min_value) > 1 ? "s" : ""}`}${t.perk ? ` (${t.perk})` : ""}`)
+        .join(" → ") + ". Ton niveau se met à jour tout seul après chaque passage.",
     });
   }
   if (program.streak_enabled) {
     out.push({
       icon: "🔥",
       title: "Série",
-      text: `Venir au moins une fois par semaine (lundi → dimanche) prolonge la série. Toutes les ${program.streak_goal} semaines d'affilée : +${program.streak_bonus} ${unit}(s). Rappel le ${days[program.streak_reminder_dow]} à ${program.streak_reminder_hour} h pour ceux qui ne sont pas encore venus.`,
+      text: `Viens au moins une fois par semaine (du lundi au dimanche) : toutes les ${program.streak_goal} semaines d'affilée, tu gagnes ${units(program.streak_bonus)} en plus. Petit rappel le ${days[program.streak_reminder_dow]} à ${program.streak_reminder_hour} h si tu n'es pas encore passé.`,
     });
   }
   if (program.lap_times_enabled) {
     out.push({
       icon: "⏱️",
       title: "Record et classement",
-      text: "Après la session, le commerçant tape le meilleur tour du client dans le scanner. S'il est battu, le record et la position (P1, P2…) se mettent à jour sur la carte ; les pilotes dépassés sont prévenus.",
+      text: "Après ta session, ton meilleur tour est enregistré en caisse : ta carte affiche ton record et ta place au classement (P1, P2…). Si quelqu'un te dépasse, tu es prévenu.",
     });
   }
-  if (program.referral_bonus > 0) out.push({ icon: "🤝", title: "Parrainage", text: `+${program.referral_bonus} ${unit}(s) pour le parrain à la 1re visite de son ami.` });
+  if (program.referral_bonus > 0) out.push({ icon: "🤝", title: "Parrainage", text: `${units(program.referral_bonus)} en plus pour toi à la 1re visite de l'ami que tu invites.` });
   if (program.bonus_multiplier > 1 && program.bonus_start_hour != null) {
-    out.push({ icon: "⚡", title: "Heures boostées", text: `× ${program.bonus_multiplier} de ${program.bonus_start_hour} h à ${program.bonus_end_hour} h.` });
+    out.push({ icon: "⚡", title: "Heures boostées", text: `Tes gains sont multipliés par ${program.bonus_multiplier} de ${program.bonus_start_hour} h à ${program.bonus_end_hour} h.` });
   }
   if (program.welcome_offer) out.push({ icon: "👋", title: "Bienvenue", text: program.welcome_offer });
   if (program.birthday_offer) out.push({ icon: "🎂", title: "Anniversaire", text: program.birthday_offer });

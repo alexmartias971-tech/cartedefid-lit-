@@ -1,26 +1,33 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 import QRCode from "qrcode";
 import {
+  autoSlots,
+  bannerOptions,
   cardBannerSvg,
   cardPosterSvg,
   fieldLabels,
-  posterFields,
+  googleFields,
+  isLegacyLayout,
   type CardDesign,
   type CardState,
   type Field as CardField,
   type ResolvedSlots,
 } from "@/lib/card-state";
-import { FORMATS, layerBox, layerSvg, stampsBox, type BannerOptions } from "@/lib/visual";
-import { bannerOptions } from "@/lib/card-state";
-import { SLOT_SOURCES, type ArtFormat, type CardLayout, type FieldSlot } from "@/lib/layout";
+import { coverRect, FORMATS, layerBox, layerSvg, stampsBox, type BannerFormat, type BannerOptions, type LogoArt } from "@/lib/visual";
+import type { ArtFormat, CardLayout, Crop } from "@/lib/layout";
+import { useImageRatio } from "@/lib/use-image-ratio";
 
 /**
- * Aperçu fidèle de la carte dans le Wallet, aux formats officiels :
- *  - "poster" : iPhone iOS 27 (photo sur toute la carte, 358 × 448)
- *  - "apple"  : iPhone iOS 26 et avant (bannière 375 × 144)
- *  - "google" : Android, Google Wallet (image héros 1032 × 336, en bas)
+ * Aperçu fidèle de la carte dans le Wallet, aux formats officiels (vérifiés en octobre 2026) :
+ *  - "poster" : iPhone iOS 27, style « Poster Generic » : photo sur toute la carte (artwork 358 × 448 pt),
+ *               petit logo (primaryLogo, sans texte à côté : sans logo, le nom est écrit en image), 1 champ en haut
+ *               à droite, QR code, 4 champs et 1 ligne en bas.
+ *  - "apple"  : iPhone iOS 26 et avant, style « storeCard » : logo + nom + champ d'en-tête, bannière 375 × 144 pt,
+ *               UNE ligne de 4 champs au maximum, puis le QR code.
+ *  - "google" : Android : logo rond + nom en haut à gauche (ou logo large qui remplace les deux), titre, QR code,
+ *               2 compteurs, puis l'image héros (≈ 5:4) en bas.
  * Les images sont dessinées avec exactement le même code que celles envoyées au téléphone,
  * et le QR code est un vrai QR code (scannable).
  */
@@ -31,19 +38,21 @@ export type PreviewProps = {
   customerName: string;
   design: CardDesign;
   state: CardState;
-  /** Photo à afficher (celle du niveau du client, sinon la photo principale). */
+  /** Photo à afficher pour ce téléphone (celle du niveau, le visuel propre au format ou la photo principale). */
   photoUrl?: string | null;
   /** Progression dessinée (cases remplies / total). */
-  progress: { total: number; filled: number };
-  /** Deuxième champ sous la bannière (ex : CADEAU / prochain cadeau / taux de cashback). */
+  progress: { total: number; filled: number; streak?: { count: number; goal: number } | null };
+  /** Gardés pour compatibilité (anciens appels). */
   secondary?: { label: string; value: string } | null;
   couponsCount?: number;
   /** Contenu du QR code (numéro de la carte). */
   qrValue?: string;
   /** Zones remplies selon la disposition de l'éditeur (sinon : disposition automatique). */
   slots?: ResolvedSlots | null;
-  /** Mode éditeur : zones cliquables, textes modifiables sur place, calques déplaçables. */
+  /** Mode éditeur : zones cliquables, calques déplaçables, photo recadrable. */
   editor?: CardEditorHooks;
+  /** Montre le cadre de chaque zone (survol) : désactivé pour les petites vignettes. */
+  compact?: boolean;
 };
 
 export type CardEditorHooks = {
@@ -51,11 +60,9 @@ export type CardEditorHooks = {
   onSelect: (zone: string | null) => void;
   onLayerChange: (id: string, change: { x?: number; y?: number; size?: number; rot?: number }, format: ArtFormat) => void;
   onStampsMove: (y: number, format: ArtFormat) => void;
-  onSlotLabel: (slot: FieldSlot, label: string) => void;
-  onSlotValue: (slot: FieldSlot | "foot", value: string) => void;
-  onName: (name: string) => void;
-  onProgramName: (name: string) => void;
-  slotConfigs: CardLayout["slots"];
+  /** Recadrage de la photo au doigt (outil « Fond »). */
+  panPhoto?: boolean;
+  onCropChange?: (format: ArtFormat, crop: Crop) => void;
 };
 
 function QrSvg({ value, size }: { value: string; size: number }) {
@@ -78,216 +85,18 @@ function QrSvg({ value, size }: { value: string; size: number }) {
   );
 }
 
-function Logo({ url, name, bg, fg, size = 32, round }: { url?: string | null; name: string; bg: string; fg: string; size?: number; round?: boolean }) {
-  const initial = (name.trim()[0] ?? "?").toUpperCase();
-  const style = { width: size, height: size };
-  if (url) return <img src={url} alt="" style={style} className={`object-contain ${round ? "rounded-full bg-white" : "rounded-md"}`} />;
+function FieldView({ f, labelColor, align, size = "md" }: { f: CardField; labelColor: string; align?: "right" | "center"; size?: "sm" | "md" | "lg" }) {
+  const v = size === "lg" ? "text-[17px] font-semibold" : size === "sm" ? "text-[12.5px] font-medium" : "text-[14px] font-medium";
   return (
-    <span style={{ ...style, background: fg, color: bg }} className={`grid place-items-center font-bold ${round ? "rounded-full" : "rounded-md"}`}>
-      {initial}
-    </span>
-  );
-}
-
-function Field({ label, value, color, align, big }: { label: string; value: string; color: string; align?: "right"; big?: boolean }) {
-  return (
-    <div className={`min-w-0 ${align === "right" ? "text-right" : ""}`}>
-      <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color }}>
-        {label}
-      </div>
-      <div className={`${big ? "text-[15px]" : "text-[14px]"} leading-tight truncate`}>{value}</div>
+    <div className={`min-w-0 ${align === "right" ? "text-right" : align === "center" ? "text-center" : ""}`}>
+      <div className="truncate text-[10px] font-semibold uppercase tracking-wider" style={{ color: labelColor }}>{f.label}</div>
+      <div className={`${v} truncate leading-tight tabular-nums`}>{f.value}</div>
     </div>
   );
 }
 
-const Svg = ({ html, ratio }: { html: string; ratio: string }) => (
-  <div className="w-full [&>svg]:w-full [&>svg]:h-full" style={{ aspectRatio: ratio }} dangerouslySetInnerHTML={{ __html: html }} />
-);
-
-function LegacyCard(p: PreviewProps) {
-  const d = p.design;
-  const bg = p.state.tier?.color || d.backgroundColor;
-  const design = useMemo(() => ({ ...d, backgroundColor: bg }), [d, bg]);
-  const labels = fieldLabels(d, p.state);
-  const photo = p.photoUrl !== undefined ? p.photoUrl : d.stripImageUrl;
-  const qrValue = p.qrValue || "APERCU-CARTE-FIDELITE";
-  const name = p.businessName || "Nom du commerce";
-  const { total, filled } = p.progress;
-  const uid = `pv-${p.platform}`;
-
-  const art = useMemo(() => {
-    const progress = { total, filled };
-    if (p.platform === "poster") return cardPosterSvg(design, 358, 448, uid, photo, progress);
-    if (p.platform === "google") return cardBannerSvg(design, progress, "google", 1032, 336, uid, { decor: photo });
-    return cardBannerSvg(design, progress, "apple", 375, 144, uid, { decor: photo });
-  }, [p.platform, design, total, filled, uid, photo]);
-
-  const fields: { label: string; value: string }[] = [{ label: labels.customer, value: p.customerName }];
-  if (p.state.lap) fields.push({ label: "RECORD", value: p.state.lap });
-  else if (p.secondary) fields.push(d.mode === "stamps" && labels.reward ? { ...p.secondary, label: labels.reward } : p.secondary);
-  if (p.state.tier) fields.push({ label: "NIVEAU", value: p.state.tier.name });
-  if (p.state.streak) fields.push({ label: "SÉRIE", value: `🔥 ${p.state.streak.count} sem.` });
-  if (p.couponsCount) fields.push({ label: "OFFRES", value: `${p.couponsCount} disponible${p.couponsCount > 1 ? "s" : ""}` });
-
-  if (p.platform === "poster") {
-    // Même disposition que l'iPhone (iOS 27) : mêmes champs que la vraie carte.
-    const { header, primary, footer } = posterFields(p.state, labels, p.customerName);
-    return (
-      <div className="w-full max-w-[340px]">
-        <div className="text-xs font-semibold text-gray-500 mb-1">iPhone · iOS 27 (carte « poster »)</div>
-        <div className="relative overflow-hidden rounded-[22px] shadow-xl" style={{ background: bg, color: d.foregroundColor, aspectRatio: "358 / 494" }}>
-          <div className="absolute inset-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: art }} />
-          <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3.5">
-            <div className="flex items-center gap-2 min-w-0">
-              {p.logoUrl && <img src={p.logoUrl} alt="" className="h-[30px] max-w-[126px] object-contain object-left" />}
-              {(d.showLogoText || !p.logoUrl) && <span className="text-[17px] font-semibold truncate drop-shadow">{name}</span>}
-            </div>
-            <div className="text-right drop-shadow">
-              <div className="text-[10px] font-bold tracking-wider" style={{ color: d.labelColor }}>{header.label}</div>
-              <div className="text-[15px] font-semibold leading-tight">{header.value}</div>
-            </div>
-          </div>
-          <div className="absolute inset-x-0 flex justify-center" style={{ top: "47%" }}>
-            <div className="rounded-xl bg-white p-[2.2%] leading-none shadow-lg w-[34%] [&>svg]:w-full [&>svg]:h-auto">
-              <QrSvg value={qrValue} size={112} />
-            </div>
-          </div>
-          <div className="absolute inset-x-0 bottom-0 px-4 pb-3 pt-3 backdrop-blur-md" style={{ background: `linear-gradient(to bottom, transparent, ${bg}cc 35%)` }}>
-            <div className="flex items-end justify-between gap-2">
-              {primary.map((f, i) => (
-                <div key={f.label + i} className={`min-w-0 ${i === primary.length - 1 ? "text-right" : ""}`}>
-                  <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color: d.labelColor }}>{f.label}</div>
-                  <div className={`${primary.length > 3 ? "text-[15px]" : "text-[17px]"} font-semibold leading-tight truncate tabular-nums`}>{f.value}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 text-[12px] font-medium leading-snug line-clamp-2" style={{ color: d.stampColor }}>{footer}</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (p.platform === "google") {
-    return (
-      <div className="w-full max-w-[340px]">
-        <div className="text-xs font-semibold text-gray-500 mb-1">Android · Google Wallet</div>
-        <div className="overflow-hidden rounded-[26px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
-          <div className="flex items-center gap-2.5 px-4 pt-4">
-            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} round />
-            <span className="text-sm font-medium truncate">{name}</span>
-          </div>
-          <div className="px-4 pt-3 text-[22px] leading-snug">{d.programName || "Carte de fidélité"}</div>
-          <div className="grid grid-cols-2 gap-3 px-4 pt-3">
-            <Field label={labels.balance} value={p.state.balanceValue} color={d.foregroundColor} big />
-            {p.state.rank ? (
-              <Field label="CLASSEMENT" value={`P${p.state.rank.pos} / ${p.state.rank.total}`} color={d.foregroundColor} align="right" big />
-            ) : p.state.tier ? (
-              <Field label="NIVEAU" value={p.state.tier.name} color={d.foregroundColor} align="right" big />
-            ) : (
-              <Field label={labels.customer} value={p.customerName} color={d.foregroundColor} align="right" big />
-            )}
-          </div>
-          <div className="flex flex-col items-center py-4">
-            <div className="rounded-2xl bg-white p-2.5 leading-none"><QrSvg value={qrValue} size={116} /></div>
-            <div className="mt-1.5 text-xs opacity-80">{p.customerName}</div>
-          </div>
-          <Svg html={art} ratio="1032 / 336" />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-full max-w-[340px]">
-      <div className="text-xs font-semibold text-gray-500 mb-1">iPhone · iOS 26 et avant</div>
-      <div className="overflow-hidden rounded-[14px] shadow-xl flex flex-col" style={{ background: bg, color: d.foregroundColor }}>
-        <div className="flex items-center justify-between gap-2 px-3 h-[52px] shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} />
-            {d.showLogoText && <span className="font-semibold text-[15px] truncate">{name}</span>}
-          </div>
-          <div className="flex gap-4">
-            {p.state.rank && <Field label="CLASSEMENT" value={`P${p.state.rank.pos}`} color={d.labelColor} align="right" />}
-            <Field label={labels.balance} value={p.state.balanceValue} color={d.labelColor} align="right" />
-          </div>
-        </div>
-        <Svg html={art} ratio="375 / 144" />
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 pt-3">
-          {fields.slice(0, 4).map((f, i) => (
-            <Field key={f.label + i} label={f.label} value={f.value} color={d.labelColor} align={i % 2 === 1 ? "right" : undefined} />
-          ))}
-        </div>
-        <div className="flex flex-col items-center pb-4 pt-6">
-          <div className="rounded-lg bg-white p-2 leading-none"><QrSvg value={qrValue} size={108} /></div>
-          <div className="mt-1 text-[11px] opacity-80">{p.customerName}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ======================================================================
- *  Carte selon la disposition de l'éditeur (zones choisies + calques)
- * ====================================================================== */
-
-/** Carte affichée : disposition de l'éditeur si elle existe, sinon l'affichage automatique d'avant. */
-export default function CardPreview(p: PreviewProps) {
-  if (p.slots) return <SlotCard {...p} slots={p.slots} />;
-  return <LegacyCard {...p} />;
-}
-
-const SOURCE_LABEL: Record<string, string> = Object.fromEntries(SLOT_SOURCES.map((s) => [s.src, s.label]));
-
-/** Petit champ de saisie posé directement sur la carte (même taille que le texte remplacé). */
-function InlineInput({
-  value,
-  placeholder,
-  onChange,
-  className,
-  style,
-  maxLength,
-  align,
-}: {
-  value: string;
-  placeholder: string;
-  onChange: (v: string) => void;
-  className?: string;
-  style?: React.CSSProperties;
-  maxLength: number;
-  align?: "right";
-}) {
-  return (
-    <input
-      value={value}
-      placeholder={placeholder}
-      maxLength={maxLength}
-      onChange={(e) => onChange(e.target.value)}
-      onClick={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      size={Math.max(4, (value || placeholder).length + 1)}
-      className={`card-inline ${align === "right" ? "text-right" : ""} ${className ?? ""}`}
-      style={style}
-    />
-  );
-}
-
-/** Zone cliquable (pointillés) en mode éditeur, simple bloc sinon. */
-function Zone({
-  id,
-  name,
-  ed,
-  className,
-  style,
-  children,
-}: {
-  id: string;
-  name: string;
-  ed?: CardEditorHooks;
-  className?: string;
-  style?: React.CSSProperties;
-  children: React.ReactNode;
-}) {
+/** Zone cliquable en mode éditeur (cadre au survol), simple bloc sinon. */
+function Zone({ id, label, ed, className, style, children }: { id: string; label: string; ed?: CardEditorHooks; className?: string; style?: React.CSSProperties; children: React.ReactNode }) {
   if (!ed) return <div className={className} style={style}>{children}</div>;
   const on = ed.selected === id;
   return (
@@ -295,14 +104,14 @@ function Zone({
       data-zone={id}
       role="button"
       tabIndex={0}
-      aria-label={`Modifier : ${name}`}
+      aria-label={`Modifier : ${label}`}
       aria-pressed={on}
       onClick={(e) => {
         e.stopPropagation();
         ed.onSelect(id);
       }}
       onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).tagName !== "INPUT") {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           ed.onSelect(id);
         }
@@ -310,109 +119,41 @@ function Zone({
       className={`card-zone ${on ? "card-zone-on" : ""} ${className ?? ""}`}
       style={style}
     >
-      {on && <span className="card-zone-chip">{name}</span>}
+      {on && <span className="card-zone-chip">{label}</span>}
       {children}
     </div>
   );
 }
 
-const ZONE_NAMES: Record<string, string> = {
-  top: "En haut à droite",
-  b1: "Champ 1",
-  b2: "Champ 2",
-  b3: "Champ 3",
-  b4: "Champ 4",
-  foot: "Ligne du bas",
-  logo: "Logo et nom",
-  qr: "QR code",
-  title: "Nom de la carte",
-};
+const Art = ({ html, className = "absolute inset-0" }: { html: string; className?: string }) => (
+  <div className={`${className} [&>svg]:h-full [&>svg]:w-full`} dangerouslySetInnerHTML={{ __html: html }} />
+);
 
-/** Un champ (petit titre + valeur) dans une zone. */
-function SlotField({
-  zone,
-  field,
-  labelColor,
-  align,
-  size = "md",
-  ed,
-}: {
-  zone: FieldSlot;
-  field: CardField | null;
-  labelColor: string;
-  align?: "right";
-  size?: "md" | "lg";
-  ed?: CardEditorHooks;
-}) {
-  const cfg = ed?.slotConfigs?.[zone];
-  const on = ed?.selected === zone;
-  if (!ed && !field) return null;
-  const valueCls = `${size === "lg" ? "text-[17px] font-semibold" : "text-[14px]"} leading-tight truncate tabular-nums`;
-  let content: React.ReactNode;
-  if (on && ed) {
-    content = (
-      <>
-        <div className="text-[10px] font-semibold tracking-wider" style={{ color: labelColor }}>
-          <InlineInput
-            value={cfg?.label ?? ""}
-            placeholder={field?.label || (cfg?.src === "custom" ? "TITRE" : "")}
-            onChange={(v) => ed.onSlotLabel(zone, v)}
-            maxLength={20}
-            align={align}
-            className="uppercase tracking-wider font-semibold"
-          />
-        </div>
-        {cfg?.src === "custom" ? (
-          <InlineInput
-            value={cfg.value ?? ""}
-            placeholder="Ton texte"
-            onChange={(v) => ed.onSlotValue(zone, v)}
-            maxLength={40}
-            align={align}
-            className={valueCls}
-          />
-        ) : (
-          <div className={valueCls}>{field?.value ?? "—"}</div>
-        )}
-      </>
-    );
-  } else if (field) {
-    content = (
-      <>
-        <div className="text-[10px] font-semibold tracking-wider truncate" style={{ color: labelColor }}>{field.label}</div>
-        <div className={valueCls}>{field.value}</div>
-      </>
-    );
-  } else {
-    const src = cfg?.src ?? "none";
-    content = (
-      <div className="card-empty">
-        {src === "none" ? "+ vide" : `${SOURCE_LABEL[src] ?? src} (absent ici)`}
-      </div>
-    );
-  }
-  return (
-    <Zone id={zone} name={ZONE_NAMES[zone]} ed={ed} className={`min-w-0 ${align === "right" ? "text-right" : ""}`}>
-      {content}
-    </Zone>
-  );
-}
-
-/** Calques (textes, stickers) et bande de tampons, déplaçables à la souris ou au doigt. */
+/** Calques (textes, stickers, logo, mascotte), bande de tampons et recadrage de la photo, au doigt ou à la souris. */
 function ArtOverlay({
   format,
   layers,
   options,
+  logo,
   ed,
+  legacyArt = false,
+  dims,
 }: {
   format: ArtFormat;
   layers: CardLayout["layers"];
   options: BannerOptions;
+  logo: LogoArt | null;
   ed: CardEditorHooks;
+  /** Ancien style dessiné en bandeau : ni bande de tampons à glisser, ni recadrage (le dessin ne les utilise pas). */
+  legacyArt?: boolean;
+  /** Taille du dessin si elle diffère du format (ancien bandeau Android 3:1). */
+  dims?: { w: number; h: number };
 }) {
   const ref = useRef<SVGSVGElement>(null);
-  const { w: W, h: H } = FORMATS[format];
-  const band = stampsBox(options, format);
+  /** Dernier appui au doigt ? (au doigt, un simple toucher sélectionne et glisser fait défiler la page) */
+  const touch = useRef(false);
+  const { w: W, h: H } = dims ?? FORMATS[format];
+  const band = legacyArt ? null : stampsBox(options, format);
   const toPoint = (e: { clientX: number; clientY: number }) => {
     const svg = ref.current;
     const m = svg?.getScreenCTM();
@@ -440,28 +181,53 @@ function ArtOverlay({
     target.addEventListener("pointerup", up);
     target.addEventListener("pointercancel", up);
   };
-  const u = Math.min(W, H) / 100; // unité des poignées
+  // Au doigt (écran tactile), des poignées plus grandes
+  const coarse = useSyncExternalStore(
+    (cb) => {
+      const m = window.matchMedia("(pointer: coarse)");
+      m.addEventListener("change", cb);
+      return () => m.removeEventListener("change", cb);
+    },
+    () => window.matchMedia("(pointer: coarse)").matches,
+    () => false,
+  );
+  const u = (Math.min(W, H) / 100) * (coarse ? 1.6 : 1);
+  const canPan = !legacyArt && !!(ed.panPhoto && options.photo && options.photoRatio && ed.onCropChange);
   return (
     <svg
       ref={ref}
-      className="absolute inset-0 h-full w-full touch-none"
+      className={`absolute inset-0 h-full w-full ${ed.selected ? "touch-none" : ""}`}
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="xMidYMid slice"
-      aria-label="Photo de la carte : clique pour la modifier, fais glisser les textes et stickers"
+      aria-label="Visuel de la carte"
       onClick={(e) => e.stopPropagation()}
     >
       <rect
         width={W}
         height={H}
         fill="transparent"
+        className={canPan ? "cursor-grab" : "cursor-pointer"}
         onPointerDown={(e) => {
           e.stopPropagation();
+          touch.current = e.pointerType === "touch";
+          // Au doigt : sélection au relâcher (voir onClick), sauf pour recadrer la photo déjà sélectionnée
+          if (touch.current && !(canPan && ed.selected === "photo")) return;
           ed.onSelect("photo");
+          if (!canPan) return;
+          // Glisser = déplacer la photo dans le cadre (le zoom se règle dans le panneau)
+          const crop = options.crop ?? { x: 0.5, y: 0.5, zoom: 1 };
+          const r = coverRect(options.photoRatio!, W, H, crop);
+          const p0 = toPoint(e);
+          drag(e, (p) => {
+            const nx = r.w - W > 0.5 ? crop.x - (p.x - p0.x) / (r.w - W) : crop.x;
+            const ny = r.h - H > 0.5 ? crop.y - (p.y - p0.y) / (r.h - H) : crop.y;
+            ed.onCropChange!(format, { x: Math.min(1, Math.max(0, nx)), y: Math.min(1, Math.max(0, ny)), zoom: crop.zoom });
+          });
         }}
-        className="cursor-pointer"
+        onClick={() => touch.current && ed.selected !== "photo" && ed.onSelect("photo")}
       />
       {ed.selected === "photo" && (
-        <rect x={1} y={1} width={W - 2} height={H - 2} fill="none" stroke="#ff5b1f" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        <rect x={1} y={1} width={W - 2} height={H - 2} fill="none" stroke="#ff5b1f" strokeWidth={2} vectorEffect="non-scaling-stroke" pointerEvents="none" />
       )}
       {band && (
         <rect
@@ -471,27 +237,30 @@ function ArtOverlay({
           height={band.h + 4}
           rx={6}
           fill="transparent"
-          stroke={ed.selected === "stamps" ? "#ff5b1f" : "#ffffff"}
-          strokeOpacity={ed.selected === "stamps" ? 1 : 0.75}
-          strokeDasharray={ed.selected === "stamps" ? undefined : "4 3"}
-          strokeWidth={ed.selected === "stamps" ? 2 : 1.2}
+          stroke={ed.selected === "stamps" ? "#ff5b1f" : "transparent"}
+          strokeWidth={2}
           vectorEffect="non-scaling-stroke"
-          className="cursor-ns-resize"
+          className="card-band cursor-ns-resize"
           onPointerDown={(e) => {
+            touch.current = e.pointerType === "touch";
+            if (touch.current && ed.selected !== "stamps") return;
             ed.onSelect("stamps");
             const p0 = toPoint(e);
             const c0 = band.y + band.h / 2;
             drag(e, (p) => ed.onStampsMove(Math.min(0.97, Math.max(0.03, (c0 + p.y - p0.y) / H)), format));
           }}
+          onClick={() => touch.current && ed.selected !== "stamps" && ed.onSelect("stamps")}
         />
       )}
       {layers.map((l) => {
-        const box = layerBox(l, format, W, H);
+        const ctx = { logo, uid: "ed" };
+        const box = layerBox(l, format, W, H, ctx);
         const on = ed.selected === `layer:${l.id}`;
         const pos = { x: box.cx, y: box.cy };
+        const size0 = format === "poster" ? l.size : (l.at?.[format]?.size ?? l.size);
         return (
           <g key={l.id}>
-            <g dangerouslySetInnerHTML={{ __html: layerSvg(l, format, W, H) }} style={{ pointerEvents: "none" }} />
+            <g dangerouslySetInnerHTML={{ __html: layerSvg(l, format, W, H, ctx) }} style={{ pointerEvents: "none" }} />
             <g transform={`rotate(${box.rot} ${box.cx} ${box.cy})`}>
               <rect
                 x={box.cx - box.w / 2}
@@ -499,51 +268,51 @@ function ArtOverlay({
                 width={box.w}
                 height={box.h}
                 fill="transparent"
-                stroke={on ? "#ff5b1f" : "#ffffff"}
-                strokeOpacity={on ? 1 : 0.6}
-                strokeDasharray={on ? undefined : "4 3"}
-                strokeWidth={on ? 1.8 : 1}
+                stroke={on ? "#ff5b1f" : "transparent"}
+                strokeWidth={1.8}
                 vectorEffect="non-scaling-stroke"
-                className="cursor-move"
+                className="card-layer cursor-move"
                 onPointerDown={(e) => {
+                  touch.current = e.pointerType === "touch";
+                  if (touch.current && !on) return;
                   ed.onSelect(`layer:${l.id}`);
                   const p0 = toPoint(e);
                   drag(e, (p) => ed.onLayerChange(l.id, { x: (pos.x + p.x - p0.x) / W, y: (pos.y + p.y - p0.y) / H }, format));
                 }}
+                onClick={() => touch.current && !on && ed.onSelect(`layer:${l.id}`)}
               />
               {on && (
                 <>
-                  {/* Agrandir / réduire */}
                   <circle
                     cx={box.cx + box.w / 2}
                     cy={box.cy + box.h / 2}
-                    r={3.2 * u}
+                    r={3.4 * u}
                     fill="#ffffff"
                     stroke="#ff5b1f"
                     strokeWidth={2}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-nwse-resize"
+                    aria-label="Agrandir ou réduire"
                     onPointerDown={(e) => {
                       const p0 = toPoint(e);
                       const d0 = Math.hypot(p0.x - box.cx, p0.y - box.cy) || 1;
-                      const fmtSize = (format === "poster" ? l.size : (l.at?.[format]?.size ?? l.size));
                       drag(e, (p) => {
                         const d = Math.hypot(p.x - box.cx, p.y - box.cy);
-                        ed.onLayerChange(l.id, { size: Math.min(80, Math.max(2, (fmtSize * d) / d0)) }, format);
+                        ed.onLayerChange(l.id, { size: Math.min(100, Math.max(2, (size0 * d) / d0)) }, format);
                       });
                     }}
                   />
-                  {/* Tourner */}
-                  <line x1={box.cx} y1={box.cy - box.h / 2} x2={box.cx} y2={box.cy - box.h / 2 - 7 * u} stroke="#ff5b1f" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-                  <circle
+                  {l.kind !== "logo" && <line x1={box.cx} y1={box.cy - box.h / 2} x2={box.cx} y2={box.cy - box.h / 2 - 7 * u} stroke="#ff5b1f" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />}
+                  {l.kind !== "logo" && <circle
                     cx={box.cx}
                     cy={box.cy - box.h / 2 - 7 * u}
-                    r={3.2 * u}
+                    r={3.4 * u}
                     fill="#ff5b1f"
                     stroke="#ffffff"
                     strokeWidth={2}
                     vectorEffect="non-scaling-stroke"
                     className="cursor-grab"
+                    aria-label="Tourner"
                     onPointerDown={(e) =>
                       drag(e, (p) => {
                         let deg = (Math.atan2(p.y - box.cy, p.x - box.cx) * 180) / Math.PI + 90;
@@ -552,7 +321,7 @@ function ArtOverlay({
                         ed.onLayerChange(l.id, { rot: Math.round(deg) }, format);
                       })
                     }
-                  />
+                  />}
                 </>
               )}
             </g>
@@ -563,78 +332,90 @@ function ArtOverlay({
   );
 }
 
-function SlotCard(p: PreviewProps & { slots: ResolvedSlots }) {
+/** Carte affichée : celle de l'éditeur (zones choisies) ou la disposition automatique. */
+export default function CardPreview(p: PreviewProps) {
   const d = p.design;
   const ed = p.editor;
+  const fmt: ArtFormat = p.platform;
   const bg = p.state.tier?.color || d.backgroundColor;
-  const fmt: ArtFormat = p.platform === "poster" ? "poster" : p.platform === "google" ? "google" : "apple";
-  // En mode éditeur, les calques sont dessinés par la couche interactive (au-dessus)
-  const design = useMemo(
+  const photo = p.photoUrl !== undefined ? p.photoUrl : d.stripImageUrl;
+  const logoRatio = useImageRatio(p.logoUrl);
+  const photoRatio = useImageRatio(photo);
+  const logo: LogoArt | null = p.logoUrl && logoRatio ? { href: p.logoUrl, ratio: logoRatio } : null;
+  const slots = p.slots ?? autoSlots(d, p.state, p.customerName);
+  const name = p.businessName || "Nom du commerce";
+  const qrValue = p.qrValue || "APERCU-CARTE-FIDELITE";
+  const topLogo = !!p.logoUrl && d.layout?.topLogo !== false;
+  const showName = d.showLogoText || !topLogo;
+  const { total, filled } = p.progress;
+  const streak = p.progress.streak ?? null;
+
+  // En mode éditeur, les calques sont dessinés par la couche interactive (au-dessus) : on les retire du dessin de fond
+  const drawDesign = useMemo(
     () => ({ ...d, backgroundColor: bg, layout: ed ? { ...d.layout, layers: [] } : d.layout }),
     [d, bg, ed],
   );
-  const photo = p.photoUrl !== undefined ? p.photoUrl : d.stripImageUrl;
-  const qrValue = p.qrValue || "APERCU-CARTE-FIDELITE";
-  const name = p.businessName || "Nom du commerce";
-  const { total, filled } = p.progress;
-  const uid = `sv-${p.platform}`;
+  const uid = `cv-${p.platform}-${ed ? "e" : "v"}`;
+  // Ancien style dessiné (grille, collection, remplissage) : bandeau, ni bande de tampons à glisser, ni recadrage
+  const legacyArt = fmt !== "poster" && d.mode !== "cashback" && !["glass", "minimal", "track", "none"].includes(d.progressStyle);
+  // L'image Android garde l'ancien bandeau 3:1 pour un ancien style dessiné, et pour une carte pas encore enregistrée
+  // avec l'éditeur v2 (hors éditeur : dans l'éditeur, on montre déjà ce que donnera l'enregistrement), comme sur les téléphones
+  const artFmt: BannerFormat | "poster" = fmt === "google" && (legacyArt || (!ed && isLegacyLayout(d.layout))) ? "googleLegacy" : fmt;
+  const assets = useMemo(() => ({ logo, photoRatio }), [logo?.href, logo?.ratio, photoRatio]); // eslint-disable-line react-hooks/exhaustive-deps
   const art = useMemo(() => {
-    const progress = { total, filled };
-    if (p.platform === "poster") return cardPosterSvg(design, 358, 448, uid, photo, progress);
-    if (p.platform === "google") return cardBannerSvg(design, progress, "google", 1032, 336, uid, { decor: photo });
-    return cardBannerSvg(design, progress, "apple", 375, 144, uid, { decor: photo });
-  }, [p.platform, design, total, filled, uid, photo]);
-  const options = useMemo(() => bannerOptions({ ...d, backgroundColor: bg }, { total, filled }, photo, fmt), [d, bg, total, filled, photo, fmt]);
-  const { top, bottom, footer } = p.slots;
-  const overlay = ed ? <ArtOverlay format={fmt} layers={d.layout.layers} options={options} ed={ed} /> : null;
+    const progress = { total, filled, streak };
+    const { w, h } = FORMATS[artFmt];
+    if (artFmt === "poster") return cardPosterSvg(drawDesign, w, h, uid, photo, progress, assets);
+    return cardBannerSvg(drawDesign, progress, artFmt, w, h, uid, { decor: photo, ...assets });
+  }, [artFmt, drawDesign, total, filled, streak, uid, photo, assets]);
+  const options = useMemo(
+    () => bannerOptions({ ...d, backgroundColor: bg }, { total, filled, streak }, photo, fmt, assets),
+    [d, bg, total, filled, streak, photo, fmt, assets],
+  );
+  const overlay = ed ? <ArtOverlay format={fmt} dims={FORMATS[artFmt]} layers={d.layout.layers} options={options} logo={logo} ed={ed} legacyArt={legacyArt} /> : null;
   const deselect = ed ? () => ed.onSelect(null) : undefined;
-  const nameNode =
-    ed && ed.selected === "logo" ? (
-      <InlineInput value={p.businessName} placeholder="Nom du commerce" onChange={ed.onName} maxLength={60} className="font-semibold" />
-    ) : (
-      name
-    );
+  const fields = slots.bottom.filter((f): f is CardField => f !== null);
+  const cls = `card-preview w-full ${p.compact ? "card-compact" : ""}`;
 
-  if (p.platform === "poster") {
-    const shown = ed ? (["b1", "b2", "b3", "b4"] as const) : (["b1", "b2", "b3", "b4"] as const).filter((_, i) => bottom[i]);
-    const lastShown = shown[shown.length - 1];
+  if (fmt === "poster") {
     return (
-      <div className="w-full max-w-[340px]" onClick={deselect}>
+      <div className={`${cls} max-w-[340px]`} onClick={deselect}>
         <div className="relative overflow-hidden rounded-[22px] shadow-xl" style={{ background: bg, color: d.foregroundColor, aspectRatio: "358 / 494" }}>
-          <div className="absolute inset-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: art }} />
+          <Art html={art} />
           {overlay}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3.5">
-            <Zone id="logo" name={ZONE_NAMES.logo} ed={ed} className="pointer-events-auto flex items-center gap-2 min-w-0">
-              {p.logoUrl && <img src={p.logoUrl} alt="" className="h-[30px] max-w-[126px] object-contain object-left" />}
-              {(d.showLogoText || !p.logoUrl) && <span className="text-[17px] font-semibold truncate drop-shadow">{nameNode}</span>}
+            <Zone id="logo" label="Logo et nom" ed={ed} className="pointer-events-auto flex min-h-[30px] min-w-0 items-center gap-2">
+              {/* iOS 27 : jamais de texte à côté du logo ; sans logo, le nom est envoyé en image (même rendu) */}
+              {topLogo ? (
+                <img src={p.logoUrl!} alt="" className="h-[30px] max-w-[126px] object-contain object-left" />
+              ) : showName ? (
+                <span className="max-w-[126px] truncate text-[19px] font-semibold leading-[30px] drop-shadow">{name}</span>
+              ) : null}
             </Zone>
-            <div className="pointer-events-auto drop-shadow">
-              <SlotField zone="top" field={top} labelColor={d.labelColor} align="right" size="lg" ed={ed} />
-            </div>
+            {slots.top && (
+              <Zone id="infos" label="Infos" ed={ed} className="pointer-events-auto drop-shadow">
+                <FieldView f={slots.top} labelColor={d.labelColor} align="right" size="lg" />
+              </Zone>
+            )}
           </div>
           <div className="pointer-events-none absolute inset-x-0 flex justify-center" style={{ top: "47%" }}>
-            <Zone id="qr" name={ZONE_NAMES.qr} ed={ed} className="pointer-events-auto rounded-xl bg-white p-[2.2%] leading-none shadow-lg w-[34%] [&_svg]:w-full [&_svg]:h-auto">
+            <Zone id="qr" label="QR code" ed={ed} className="pointer-events-auto w-[34%] rounded-xl bg-white p-[2.2%] leading-none shadow-lg [&_svg]:h-auto [&_svg]:w-full">
               <QrSvg value={qrValue} size={112} />
             </Zone>
           </div>
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-3 pt-3"
-            style={{ background: `linear-gradient(to bottom, transparent, ${bg}cc 35%)` }}
-          >
-            <div className="flex items-end justify-between gap-2">
-              {shown.map((z) => (
-                <div key={z} className={`pointer-events-auto min-w-0 ${bottom[Number(z[1]) - 1] ? "flex-1" : "flex-none"}`}>
-                  <SlotField zone={z} field={bottom[Number(z[1]) - 1]} labelColor={d.labelColor} align={z === lastShown && shown.length > 1 ? "right" : undefined} size="lg" ed={ed} />
-                </div>
-              ))}
-            </div>
-            {(footer || ed) && (
-              <Zone id="foot" name={ZONE_NAMES.foot} ed={ed} className="pointer-events-auto mt-2 text-[12px] font-medium leading-snug line-clamp-2">
-                {ed && ed.selected === "foot" && ed.slotConfigs?.foot?.src === "custom" ? (
-                  <InlineInput value={ed.slotConfigs.foot.value ?? ""} placeholder="Ton message" onChange={(v) => ed.onSlotValue("foot", v)} maxLength={90} style={{ color: d.stampColor }} />
-                ) : (
-                  <span style={{ color: d.stampColor }}>{footer || <span className="card-empty">+ vide</span>}</span>
-                )}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-3 pt-3" style={{ background: `linear-gradient(to bottom, transparent, ${bg}cc 35%)` }}>
+            {fields.length > 0 && (
+              <Zone id="infos" label="Infos" ed={ed} className="pointer-events-auto flex items-end justify-between gap-3">
+                {fields.map((f, i) => (
+                  <div key={f.key + i} className={i === fields.length - 1 && fields.length > 1 ? "min-w-0 text-right" : "min-w-0 flex-1"}>
+                    <FieldView f={f} labelColor={d.labelColor} align={i === fields.length - 1 && fields.length > 1 ? "right" : undefined} size={fields.length > 3 ? "md" : "lg"} />
+                  </div>
+                ))}
+              </Zone>
+            )}
+            {slots.footer && (
+              <Zone id="message" label="Message du bas" ed={ed} className="pointer-events-auto mt-2 line-clamp-1 text-[12px] font-medium leading-snug">
+                <span style={{ color: d.foregroundColor, opacity: 0.86 }}>{slots.footer}</span>
               </Zone>
             )}
           </div>
@@ -643,35 +424,45 @@ function SlotCard(p: PreviewProps & { slots: ResolvedSlots }) {
     );
   }
 
-  if (p.platform === "google") {
-    const rightIdx = bottom.findIndex((f) => f !== null);
-    const rightZone = (["b1", "b2", "b3", "b4"] as const)[rightIdx >= 0 ? rightIdx : 0];
+  if (fmt === "google") {
+    const wide = !!p.logoUrl && !d.showLogoText;
+    const gf = googleFields(p.state, d.mode, fieldLabels(d, p.state).balance, p.couponsCount ?? 0);
+    const left = { key: "gl", ...gf.left };
+    const right = gf.right ? { key: "gr", ...gf.right } : null;
+    const { w, h } = FORMATS[artFmt === "googleLegacy" ? "googleLegacy" : "google"];
     return (
-      <div className="w-full max-w-[340px]" onClick={deselect}>
+      <div className={`${cls} max-w-[340px]`} onClick={deselect}>
         <div className="overflow-hidden rounded-[26px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
-          <Zone id="logo" name={ZONE_NAMES.logo} ed={ed} className="flex items-center gap-2.5 px-4 pt-4">
-            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} round />
-            <span className="text-sm font-medium truncate">{nameNode}</span>
-          </Zone>
-          <Zone id="title" name={ZONE_NAMES.title} ed={ed} className="mx-4 mt-3 text-[22px] leading-snug">
-            {ed && ed.selected === "title" ? (
-              <InlineInput value={d.programName} placeholder="Carte de fidélité" onChange={ed.onProgramName} maxLength={40} />
+          <Zone id="logo" label="Logo et nom" ed={ed} className="mx-4 mt-4 flex min-h-[40px] items-center gap-2.5">
+            {wide ? (
+              <img src={p.logoUrl!} alt="" className="h-[40px] max-w-[220px] object-contain object-left" />
             ) : (
-              d.programName || "Carte de fidélité"
+              <>
+                {p.logoUrl ? (
+                  <img src={p.logoUrl} alt="" className="h-10 w-10 flex-none rounded-full object-contain p-1" style={{ background: bg, boxShadow: "inset 0 0 0 1px rgba(255,255,255,.18)" }} />
+                ) : (
+                  <span className="grid h-10 w-10 flex-none place-items-center rounded-full text-lg font-bold" style={{ background: d.foregroundColor, color: bg }}>
+                    {(name.trim()[0] ?? "?").toUpperCase()}
+                  </span>
+                )}
+                <span className="truncate text-[14px] font-medium opacity-90">{name.slice(0, 20)}</span>
+              </>
             )}
           </Zone>
-          <div className="grid grid-cols-2 gap-3 px-4 pt-3">
-            <SlotField zone="top" field={top ?? { key: "x", label: fieldLabels(d, p.state).balance, value: p.state.balanceValue }} labelColor={d.foregroundColor} size="lg" ed={ed} />
-            <SlotField zone={rightZone} field={rightIdx >= 0 ? bottom[rightIdx] : null} labelColor={d.foregroundColor} align="right" size="lg" ed={ed} />
-          </div>
-          <div className="flex flex-col items-center py-4">
-            <Zone id="qr" name={ZONE_NAMES.qr} ed={ed} className="rounded-2xl bg-white p-2.5 leading-none">
-              <QrSvg value={qrValue} size={116} />
+          <Zone id="title" label="Titre de la carte" ed={ed} className="mx-4 mt-2.5 text-[21px] leading-snug">
+            {d.programName || "Carte de fidélité"}
+          </Zone>
+          <div className="flex flex-col items-center pt-4">
+            <Zone id="qr" label="QR code" ed={ed} className="rounded-2xl bg-white p-2.5 leading-none">
+              <QrSvg value={qrValue} size={112} />
             </Zone>
-            <div className="mt-1.5 text-xs opacity-80">{p.customerName}</div>
           </div>
-          <div className="relative w-full" style={{ aspectRatio: "1032 / 336" }}>
-            <div className="absolute inset-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: art }} />
+          <Zone id="infos" label="Infos" ed={ed} className="mx-4 mt-3 grid grid-cols-2 gap-3 pb-4">
+            <FieldView f={left} labelColor={d.foregroundColor} />
+            {right ? <FieldView f={right} labelColor={d.foregroundColor} align="right" /> : <span />}
+          </Zone>
+          <div className="relative w-full" style={{ aspectRatio: `${w} / ${h}` }}>
+            <Art html={art} />
             {overlay}
           </div>
         </div>
@@ -679,31 +470,45 @@ function SlotCard(p: PreviewProps & { slots: ResolvedSlots }) {
     );
   }
 
-  const shownApple = (["b1", "b2", "b3", "b4"] as const).filter((_, i) => ed || bottom[i]);
+  // iPhone iOS 26 et avant (storeCard)
+  const { w, h } = FORMATS.apple;
+  const drawsCells = d.mode !== "cashback" && d.progressStyle !== "none";
+  const row = fields.slice(0, 4);
   return (
-    <div className="w-full max-w-[340px]" onClick={deselect}>
-      <div className="overflow-hidden rounded-[14px] shadow-xl flex flex-col" style={{ background: bg, color: d.foregroundColor }}>
-        <div className="flex items-center justify-between gap-2 px-3 h-[52px] shrink-0">
-          <Zone id="logo" name={ZONE_NAMES.logo} ed={ed} className="flex items-center gap-2 min-w-0">
-            <Logo url={p.logoUrl} name={name} bg={bg} fg={d.foregroundColor} />
-            {d.showLogoText && <span className="font-semibold text-[15px] truncate">{nameNode}</span>}
+    <div className={`${cls} max-w-[340px]`} onClick={deselect}>
+      <div className="flex flex-col overflow-hidden rounded-[14px] shadow-xl" style={{ background: bg, color: d.foregroundColor }}>
+        <div className="flex h-[54px] shrink-0 items-center justify-between gap-2 px-3">
+          <Zone id="logo" label="Logo et nom" ed={ed} className="flex min-h-[30px] min-w-0 items-center gap-2">
+            {topLogo && <img src={p.logoUrl!} alt="" className="h-[40px] max-w-[130px] object-contain object-left" />}
+            {showName && <span className="truncate text-[15px] font-semibold">{name}</span>}
           </Zone>
-          <SlotField zone="top" field={top} labelColor={d.labelColor} align="right" ed={ed} />
+          {slots.top && (
+            <Zone id="infos" label="Infos" ed={ed}>
+              <FieldView f={slots.top} labelColor={d.labelColor} align="right" />
+            </Zone>
+          )}
         </div>
-        <div className="relative w-full" style={{ aspectRatio: "375 / 144" }}>
-          <div className="absolute inset-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: art }} />
+        <div className="relative w-full" style={{ aspectRatio: `${w} / ${h}` }}>
+          <Art html={art} />
           {overlay}
+          {!drawsCells && (
+            <div className="pointer-events-none absolute bottom-3 left-4 drop-shadow">
+              <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: d.labelColor }}>{fieldLabels(d, p.state).balance}</div>
+              <div className="text-[30px] font-semibold leading-none">{p.state.balanceValue}</div>
+            </div>
+          )}
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 pt-3">
-          {shownApple.map((z, i) => (
-            <SlotField key={z} zone={z} field={bottom[Number(z[1]) - 1]} labelColor={d.labelColor} align={i % 2 === 1 ? "right" : undefined} ed={ed} />
-          ))}
-        </div>
-        <div className="flex flex-col items-center pb-4 pt-6">
-          <Zone id="qr" name={ZONE_NAMES.qr} ed={ed} className="rounded-lg bg-white p-2 leading-none">
-            <QrSvg value={qrValue} size={108} />
+        {row.length > 0 && (
+          <Zone id="infos" label="Infos" ed={ed} className="mx-3 mt-2.5 grid gap-3" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+            {row.map((f, i) => (
+              <FieldView key={f.key + i} f={f} labelColor={d.labelColor} size={row.length > 2 ? "sm" : "md"} align={i === row.length - 1 && row.length > 1 ? "right" : undefined} />
+            ))}
           </Zone>
-          <div className="mt-1 text-[11px] opacity-80">{p.customerName}</div>
+        )}
+        <div className="flex flex-col items-center pb-4 pt-5">
+          <Zone id="qr" label="QR code" ed={ed} className="rounded-lg bg-white p-2 leading-none">
+            <QrSvg value={qrValue} size={104} />
+          </Zone>
         </div>
       </div>
     </div>

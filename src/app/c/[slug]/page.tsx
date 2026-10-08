@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { cardBannerSvg, designFromProgram, programPitch } from "@/lib/card-state";
+import { programPitch } from "@/lib/card-state";
+import { bannerSvgFor } from "@/lib/strip";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, Program } from "@/lib/types";
 import { registerCustomer } from "./actions";
@@ -28,16 +29,16 @@ export default async function SignupPage({
   const program = business.loyalty_programs;
   // La bannière de la carte, telle que le client la recevra (avec le bonus d'inscription déjà rempli)
   const strip = program
-    ? cardBannerSvg(
-        designFromProgram(program),
+    ? await bannerSvgFor(
+        program,
+        business.logo_url,
         {
           total: program.mode === "stamps" ? program.reward_threshold : 10,
           filled: program.mode === "stamps" ? Math.min(program.signup_bonus, program.reward_threshold - 1) : 0,
         },
-        "google",
-        1032,
-        336,
-        "signup",
+        "apple",
+        1125,
+        432,
       )
     : null;
 
@@ -48,7 +49,7 @@ export default async function SignupPage({
         style={{ background: program?.background_color ?? "#0B6474", color: program?.foreground_color ?? "#fff" }}
       >
         {strip && (
-          <div className="w-full [&>svg]:w-full [&>svg]:h-full" style={{ aspectRatio: "1032 / 336" }} dangerouslySetInnerHTML={{ __html: strip }} />
+          <div className="w-full [&>svg]:w-full [&>svg]:h-full" style={{ aspectRatio: "375 / 144" }} dangerouslySetInnerHTML={{ __html: strip }} />
         )}
         <div className="p-6 pt-4">
         {business.logo_url && (
@@ -79,6 +80,7 @@ export default async function SignupPage({
             businessName={business.name}
             referral={referral && /^[0-9A-Fa-f]{8}$/.test(referral) ? referral.toUpperCase() : null}
             leaderboard={program.lap_times_enabled}
+            birthday={!!program.birthday_offer}
           />
         </div>
       )}

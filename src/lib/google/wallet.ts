@@ -2,7 +2,7 @@ import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
-import { computeCardState, describeProgram, designFromProgram, fieldLabels, resolveSlots, streakSentence } from "@/lib/card-state";
+import { computeCardState, describeProgram, designFromProgram, fieldLabels, googleFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -53,8 +53,10 @@ const issuerId = () => requireEnv("GOOGLE_WALLET_ISSUER_ID");
 export const googleClassId = (program: Program) => `${issuerId()}.programme_${program.id.replace(/-/g, "_")}`;
 export const googleObjectId = (serial: string) => `${issuerId()}.carte_${serial.replace(/-/g, "_")}`;
 
-function logoUri(business: Business) {
-  return `${appUrl()}/api/logo/${business.id}`;
+/** Adresse du logo (versionnée : Google ne recharge une image que si son adresse change). */
+function logoUri(business: Business, wide = false) {
+  const v = new Date(business.updated_at).getTime() || 0;
+  return `${appUrl()}/api/logo/${business.id}?v=${v}${wide ? "&wide=1" : ""}`;
 }
 
 function classBody(program: Program, business: Business) {
@@ -66,6 +68,15 @@ function classBody(program: Program, business: Business) {
       sourceUri: { uri: logoUri(business) },
       contentDescription: { defaultValue: { language: "fr-FR", value: business.name } },
     },
+    // Nom masqué + logo : le logo large remplace le logo rond ET le nom en haut de la carte Android
+    ...(!program.show_logo_text && business.logo_url
+      ? {
+          wideProgramLogo: {
+            sourceUri: { uri: logoUri(business, true) },
+            contentDescription: { defaultValue: { language: "fr-FR", value: business.name } },
+          },
+        }
+      : {}),
     hexBackgroundColor: program.background_color,
     reviewStatus: "UNDER_REVIEW",
     countryCode: "FR",
@@ -100,49 +111,46 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     nextReward: nextReward ? { cost: nextReward.cost, name: nextReward.name } : null,
     coupons: coupons.length,
   });
-  const left = slots ? (slots.top ?? { label: labels.balance, value: state.balanceValue }) : null;
-  const right = slots ? (slots.bottom.find((f) => f !== null) ?? null) : null;
-  const textModulesData = [{ id: "status", header: "Ta carte", body: state.sentence }];
-  const streakText = streakSentence(state, program.streak_bonus, program.mode === "stamps" ? "tampon(s)" : program.mode === "points" ? "points" : "€");
-  if (streakText) textModulesData.unshift({ id: "streak", header: `Série : ${state.streak?.count ?? 0} semaine(s)`, body: streakText });
-  if (state.lap) textModulesData.unshift({ id: "lap", header: "Ton record", body: `${state.lap} — bats-le au prochain passage !` });
-  if (coupons.length > 0) {
-    textModulesData.push({ id: "coupons", header: "Tes offres", body: coupons.map((c) => `• ${c.title}`).join("\n") });
-  }
+  void slots;
+  const gf = googleFields(state, program.mode, labels.balance, coupons.length);
+  const unit = program.mode === "stamps" ? (program.progress_style === "track" ? "secteurs" : "tampons") : program.mode === "points" ? "points" : "€";
+  const shareUrl = `${appUrl()}/c/${business.slug}?p=${card.referral_code}`;
+  const streakText = streakSentence(state, program.streak_bonus, unit);
+  const now: string[] = [state.sentence];
+  if (state.lap) now.push(`⏱️ Ton record : ${state.lap}. Bats-le au prochain passage !`);
+  if (streakText) now.push(streakText);
   if (state.tier) {
     const next = state.nextTier ? ` Prochain niveau (${state.nextTier.tier.name}) dans ${state.nextTier.remaining}.` : "";
-    textModulesData.push({
-      id: "tier",
-      header: `Niveau ${state.tier.name}`,
-      body: `${state.tier.perk ?? ""}${next}`.trim() || state.tier.name,
-    });
+    now.push(`Niveau ${state.tier.name}${state.tier.perk ? ` : ${state.tier.perk}` : ""}.${next}`);
   }
-  if (program.mode === "points" && catalog.length > 0) {
-    textModulesData.push({
-      id: "catalog",
-      header: "Cadeaux",
-      body: catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n"),
-    });
-  }
-  textModulesData.push({
-    id: "howto",
-    header: "Comment ça marche",
-    body: describeProgram(program, tiers).map((r) => `${r.icon} ${r.title} : ${r.text}`).join("\n"),
-  });
-  if (card.last_message) textModulesData.push({ id: "message", header: `Message de ${business.name}`, body: card.last_message });
-  if (program.back_text) textModulesData.push({ id: "info", header: "Informations", body: program.back_text });
-  const shareUrl = `${appUrl()}/c/${business.slug}?p=${card.referral_code}`;
+  if (coupons.length > 0) now.push(`🎁 Tes offres (à montrer en caisse) :\n${coupons.map((c) => `• ${c.title}`).join("\n")}`);
+  if (card.last_message) now.push(`📣 ${business.name} : ${card.last_message}`);
+  const rules: string[] = describeProgram(program, tiers)
+    .filter((r) => r.title !== "Parrainage") // repris plus bas, avec le lien
+    .map((r) => `${r.icon} ${r.title} : ${r.text}`);
   if (program.referral_bonus > 0) {
-    textModulesData.push({
-      id: "referral",
-      header: "Parraine un ami",
-      body: `Envoie ce lien : ${shareUrl} — à sa première visite, tu gagnes ${program.referral_bonus} ${program.mode === "points" ? "points" : "tampon(s)"}.`,
-    });
+    const n = program.referral_bonus;
+    rules.push(`🤝 Parraine un ami avec le lien « Parrainer un ami » plus bas : à sa première visite, tu gagnes ${n} ${program.mode === "points" ? "point" : "tampon"}${n > 1 ? "s" : ""} en plus.`);
   }
-  const uris = [{ uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" }];
-  if (program.referral_bonus > 0) uris.unshift({ uri: shareUrl, description: "Parrainer un ami", id: "referral" });
-  if (business.instagram_url) uris.unshift({ uri: business.instagram_url, description: "Instagram", id: "instagram" });
-  if (business.google_review_url) uris.unshift({ uri: business.google_review_url, description: "Laisser un avis Google", id: "review" });
+  if (program.back_text) rules.push(program.back_text);
+  const gifts =
+    program.mode === "points" && catalog.length > 0
+      ? [catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n")]
+      : [];
+  // Google conseille 500 caractères au plus par bloc (au-delà, la fin est coupée sur les petits écrans) : on découpe
+  const textModulesData = [
+    ...textBlocks("status", "Ta carte", now),
+    ...textBlocks("howto", "Comment ça marche", rules),
+    ...textBlocks("gifts", "Les cadeaux", gifts),
+  ];
+  const uris = [
+    { uri: `${appUrl()}/carte/${card.web_token}`, description: "Ma carte et mes cadeaux", id: "card" },
+    { uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" },
+  ];
+  // Ordre affiché : la page de la carte, puis avis, Instagram, parrainage, confidentialité
+  if (program.referral_bonus > 0) uris.splice(1, 0, { uri: shareUrl, description: "Parrainer un ami", id: "referral" });
+  if (business.instagram_url) uris.splice(1, 0, { uri: business.instagram_url, description: "Instagram", id: "instagram" });
+  if (business.google_review_url) uris.splice(1, 0, { uri: business.google_review_url, description: "Laisser un avis Google", id: "review" });
 
   // L'image est versionnée : Google ne la recharge que si l'adresse change
   const version = new Date(card.updated_at).getTime();
@@ -152,24 +160,10 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     state: "ACTIVE",
     accountId: card.serial_number,
     accountName: customer.first_name,
-    loyaltyPoints: left
-      ? { label: left.label, balance: { string: left.value } }
-      : { label: labels.balance, balance: { string: state.balanceValue } },
-    ...(slots
-      ? right
-        ? { secondaryLoyaltyPoints: { label: right.label, balance: { string: right.value } } }
-        : {}
-      : state.rank
-      ? { secondaryLoyaltyPoints: { label: "Classement", balance: { string: `P${state.rank.pos} / ${state.rank.total}` } } }
-      : state.lap
-      ? { secondaryLoyaltyPoints: { label: "Record", balance: { string: state.lap } } }
-      : state.streak
-        ? { secondaryLoyaltyPoints: { label: "Série", balance: { string: `🔥 ${state.streak.count} sem.` } } }
-        : state.tier
-          ? { secondaryLoyaltyPoints: { label: "niveau", balance: { string: state.tier.name } } }
-          : {}),
-    barcode: { type: "QR_CODE", value: card.serial_number, alternateText: customer.first_name },
-    hexBackgroundColor: state.tier?.color || program.background_color,
+    // Recto Android : 2 compteurs courts (le cadeau est dans le titre de la carte)
+    loyaltyPoints: { label: gf.left.label, balance: { string: gf.left.value } },
+    ...(gf.right ? { secondaryLoyaltyPoints: { label: gf.right.label, balance: { string: gf.right.value } } } : {}),
+    barcode: { type: "QR_CODE", value: card.serial_number },
     heroImage: {
       sourceUri: { uri: `${appUrl()}/api/strip/${card.serial_number}?v=${version}` },
       contentDescription: { defaultValue: { language: "fr-FR", value: program.name } },
@@ -180,6 +174,24 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
       ? { locations: [{ latitude: Number(business.latitude), longitude: Number(business.longitude) }] }
       : {}),
   };
+}
+
+/** Découpe des paragraphes en blocs de texte Google de 500 caractères au plus (« (suite) » pour les blocs suivants). */
+function textBlocks(id: string, header: string, parts: string[]): { id: string; header: string; body: string }[] {
+  const out: { id: string; header: string; body: string }[] = [];
+  let cur = "";
+  const flush = () => {
+    if (!cur) return;
+    out.push({ id: out.length ? `${id}${out.length + 1}` : id, header: out.length ? `${header} (suite)` : header, body: cur });
+    cur = "";
+  };
+  for (const p of parts) {
+    const piece = p.length > 500 ? `${p.slice(0, 499)}…` : p;
+    if (cur && cur.length + 2 + piece.length > 500) flush();
+    cur = cur ? `${cur}\n\n${piece}` : piece;
+  }
+  flush();
+  return out;
 }
 
 /** Crée ou met à jour la carte Google d'un client. */

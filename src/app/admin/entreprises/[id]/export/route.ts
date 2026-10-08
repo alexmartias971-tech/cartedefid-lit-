@@ -60,7 +60,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       c.last_name,
       c.email,
       c.phone,
-      c.birth_date,
+      // Depuis l'inscription simplifiée, l'année n'est plus demandée (enregistrée en 2000) : on n'affiche que jour/mois
+      c.birth_date ? (c.birth_date.startsWith("2000-") ? `${c.birth_date.slice(8, 10)}/${c.birth_date.slice(5, 7)}` : c.birth_date) : null,
       c.marketing_optin ? "oui" : "non",
       c.created_at,
       c.last_visit_at,
