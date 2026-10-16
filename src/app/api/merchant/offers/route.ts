@@ -1,6 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { loadCardBundlesByIds } from "@/lib/cards";
 import { getMerchantSession } from "@/lib/merchant-session";
+import { fetchAll } from "@/lib/merchant-space";
 import { createNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCards } from "@/lib/wallet-sync";
@@ -23,18 +24,31 @@ export async function GET() {
     .maybeSingle();
   if (!program) return NextResponse.json({ ok: true, offers: [], welcome: null, birthday: null, canSend: session.canSendNotifications });
 
-  const { data: rows } = await supabase
-    .from("coupons")
-    .select("title, status, created_at, expires_at")
-    .eq("program_id", program.id)
-    .eq("kind", "manual")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  // Supabase renvoie 1 000 lignes au maximum par demande : on lit par pages (une offre = une ligne par client)
+  type CouponRow = { title: string; status: string; created_at: string; expires_at: string | null };
+  let rows: CouponRow[];
+  try {
+    rows = await fetchAll<CouponRow>(
+      (from, to) =>
+        supabase
+          .from("coupons")
+          .select("id, title, status, created_at, expires_at")
+          .eq("program_id", program.id)
+          .eq("kind", "manual")
+          .order("created_at", { ascending: false })
+          .order("id")
+          .range(from, to),
+      50000,
+    );
+  } catch (err) {
+    console.error("[offers list]", (err as Error).message);
+    return NextResponse.json({ ok: false, error: "Impossible de charger vos offres. Réessayez." }, { status: 500, headers: noStore });
+  }
 
   // Une offre = toutes les lignes créées ensemble (même titre, même minute)
   const now = Date.now();
   const groups = new Map<string, { title: string; created_at: string; expires_at: string | null; total: number; used: number; active: number }>();
-  for (const r of rows ?? []) {
+  for (const r of rows) {
     const key = `${r.title}|${r.created_at.slice(0, 16)}`;
     let g = groups.get(key);
     if (!g) {
@@ -84,8 +98,18 @@ export async function POST(request: Request) {
     .gte("created_at", new Date(Date.now() - 10 * 60000).toISOString());
   if ((dup ?? 0) > 0) return NextResponse.json({ ok: false, error: "Cette offre vient déjà d'être ajoutée." }, { status: 409 });
 
-  const { data: cards } = await supabase.from("cards").select("id").eq("program_id", program.id);
-  const ids = (cards ?? []).map((c: { id: string }) => c.id);
+  // TOUTES les cartes (par pages de 1 000 : sinon seuls les 1 000 premiers clients recevraient l'offre)
+  type CardRow = { id: string; customers: { marketing_optin: boolean } | null };
+  let cards: CardRow[];
+  try {
+    cards = await fetchAll<CardRow>((from, to) =>
+      supabase.from("cards").select("id, customers(marketing_optin)").eq("program_id", program.id).order("id").range(from, to),
+    );
+  } catch (err) {
+    console.error("[offers cards]", (err as Error).message);
+    return NextResponse.json({ ok: false, error: "Erreur serveur, réessayez." }, { status: 500 });
+  }
+  const ids = cards.map((c) => c.id);
   if (ids.length === 0) return NextResponse.json({ ok: false, error: "Aucun client pour le moment." }, { status: 400 });
   const expires = days ? new Date(Date.now() + days * 86400000).toISOString() : null;
   for (let i = 0; i < ids.length; i += 500) {
@@ -101,6 +125,7 @@ export async function POST(request: Request) {
   }
 
   let warning: string | undefined;
+  let notified = false;
   if (body.notify) {
     const res = await createNotification({
       businessId: session.businessId,
@@ -111,11 +136,15 @@ export async function POST(request: Request) {
       createdBy: "merchant",
     });
     if (!res.ok) warning = `Offre ajoutée, mais la notification n'est pas partie : ${res.error}`;
+    else notified = res.sentNow;
   }
-  if (!body.notify || warning) {
-    // Les cartes dans les téléphones se mettent à jour en arrière-plan
+  // Les cartes dans les téléphones se mettent à jour en arrière-plan.
+  // La notification ne met à jour que les cartes des clients qui ont accepté les offres :
+  // les autres cartes doivent quand même recevoir l'offre.
+  const toSync = notified ? cards.filter((c) => !c.customers?.marketing_optin).map((c) => c.id) : ids;
+  if (toSync.length > 0) {
     after(async () => {
-      for (let i = 0; i < ids.length; i += 200) await syncCards(await loadCardBundlesByIds(ids.slice(i, i + 200)));
+      for (let i = 0; i < toSync.length; i += 200) await syncCards(await loadCardBundlesByIds(toSync.slice(i, i + 200)));
     });
   }
   return NextResponse.json({ ok: true, count: ids.length, warning }, { headers: noStore });

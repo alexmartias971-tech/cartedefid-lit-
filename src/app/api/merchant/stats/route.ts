@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMerchantSession } from "@/lib/merchant-session";
+import { fetchAll } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const DAY = 86400000;
@@ -59,22 +60,35 @@ export async function GET() {
     count(visits().gte("created_at", lastMonth).lt("created_at", thisMonth)),
     count(rewards().gte("created_at", thisMonth)),
     count(rewards()),
-    supabase
-      .from("stamp_events")
-      .select("created_at")
-      .eq("business_id", biz)
-      .in("event_type", ["stamp", "purchase"])
-      .is("undone_at", null)
-      .gte("created_at", since14)
-      .limit(10000),
-    supabase
-      .from("stamp_events")
-      .select("amount")
-      .eq("business_id", biz)
-      .eq("event_type", "purchase")
-      .is("undone_at", null)
-      .gte("created_at", thisMonth)
-      .limit(10000),
+    // Supabase renvoie 1 000 lignes au maximum par demande (même avec .limit(10000)) : on lit par pages
+    fetchAll<{ created_at: string }>((from, to) =>
+      supabase
+        .from("stamp_events")
+        .select("id, created_at")
+        .eq("business_id", biz)
+        .in("event_type", ["stamp", "purchase"])
+        .is("undone_at", null)
+        .gte("created_at", since14)
+        .order("id")
+        .range(from, to),
+    ).then(
+      (data) => ({ data }),
+      (err: Error) => (console.error("[stats]", err.message), { data: null }),
+    ),
+    fetchAll<{ amount: number | null }>((from, to) =>
+      supabase
+        .from("stamp_events")
+        .select("id, amount")
+        .eq("business_id", biz)
+        .eq("event_type", "purchase")
+        .is("undone_at", null)
+        .gte("created_at", thisMonth)
+        .order("id")
+        .range(from, to),
+    ).then(
+      (data) => ({ data }),
+      (err: Error) => (console.error("[stats]", err.message), { data: null }),
+    ),
     supabase
       .from("customers")
       .select("first_name, last_name, last_visit_at, cards(lifetime_visits)")
