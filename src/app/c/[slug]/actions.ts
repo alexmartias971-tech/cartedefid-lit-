@@ -64,7 +64,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   }
 
   // Déjà inscrit (même email ou même téléphone) ? On renvoie sa carte existante.
-  type Existing = { id: string; cards: { web_token: string }[] };
+  type Existing = { id: string; first_name: string | null; cards: { web_token: string }[] };
   let existing = null as Existing | null;
   for (const [column, value] of [
     ["email", email],
@@ -73,19 +73,26 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     if (existing || !value) continue;
     const { data } = await supabase
       .from("customers")
-      .select("id, cards(web_token)")
+      .select("id, first_name, cards(web_token)")
       .eq("business_id", business.id)
       .eq(column, value)
       .limit(1)
       .maybeSingle();
     existing = (data as Existing | null) ?? null;
   }
-  // Déjà une carte : on ne l'ouvre PAS ici (sinon, avec le numéro d'un autre client, on verrait sa carte et son QR code)
+  // Déjà une carte : on la redonne directement si le prénom correspond aussi (« Alex » retrouve « Alexandre »).
+  // Choix d'Alexandre (15 oct. 2026) : numéro + prénom suffisent, pour que le client la retrouve seul en une seconde.
   const existingCard = existing?.cards?.[0];
   if (existingCard) {
+    const simple = (s: string | null | undefined) =>
+      (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+    const tape = simple(firstName);
+    const connu = simple(existing?.first_name);
+    const memePrenom = tape.length >= 3 && connu.length >= 3 && (connu.startsWith(tape) || tape.startsWith(connu));
+    if (memePrenom) redirect(`/carte/${existingCard.web_token}?deja=1`);
     return {
       error:
-        "Tu as déjà une carte avec ce numéro (ou cet e-mail) : retrouve-la dans ton Wallet (app Cartes sur iPhone, Google Wallet sur Android). Tu ne la trouves plus ? Demande en caisse, on t'aide.",
+        "Une carte existe déjà avec ce numéro (ou cet e-mail), mais avec un autre prénom. Tape le prénom donné à l'inscription pour la retrouver, ou demande en caisse.",
     };
   }
 
