@@ -1,10 +1,39 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
 /**
- * Boutons "Ajouter à Apple Wallet" / "Ajouter à Google Wallet".
- * ⚠️ Avant de vendre : remplace ces boutons par les BADGES OFFICIELS d'Apple et de Google
- * (voir le guide, phase "Badges officiels"). Place les fichiers dans /public/badges/
- * puis mets USE_OFFICIAL_BADGES à true.
+ * Boutons « Ajouter à Apple Wallet » / « Ajouter à Google Wallet ».
+ * Ce sont les BADGES OFFICIELS d'Apple et de Google (fichiers dans /public/badges/, les mêmes que sur walty.fr),
+ * affichés sans modification : ne pas les recolorer, déformer ni redessiner (règles des deux marques).
+ * Si un fichier de badge manque, un bouton noir avec le même texte le remplace, pour ne jamais bloquer le client.
+ * Les liens (/api/wallet/apple/… et /api/wallet/google/…) ne changent pas.
  */
-const USE_OFFICIAL_BADGES = false;
+const BADGES = {
+  apple: { src: "/badges/apple-wallet.svg", label: "Ajouter à Apple Wallet", href: (t: string) => `/api/wallet/apple/${t}` },
+  google: { src: "/badges/google-wallet.svg", label: "Ajouter à Google Wallet", href: (t: string) => `/api/wallet/google/${t}` },
+} as const;
+
+function Badge({ kind, token }: { kind: keyof typeof BADGES; token: string }) {
+  const [broken, setBroken] = useState(false);
+  const img = useRef<HTMLImageElement>(null);
+  // Le badge a pu échouer avant que la page soit prête : on vérifie une fois au chargement
+  useEffect(() => {
+    const el = img.current;
+    if (el && el.complete && el.naturalWidth === 0) setBroken(true);
+  }, []);
+  const b = BADGES[kind];
+  return (
+    <a href={b.href(token)} className="wc-badge-link" aria-label={b.label}>
+      {broken ? (
+        <span className="wc-badge-text">{b.label}</span>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img ref={img} src={b.src} alt={b.label} className="wc-badge" onError={() => setBroken(true)} />
+      )}
+    </a>
+  );
+}
 
 export default function WalletButtons({
   token,
@@ -15,32 +44,11 @@ export default function WalletButtons({
   showApple: boolean;
   showGoogle: boolean;
 }) {
+  const solo = showApple !== showGoogle;
   return (
-    <div className="flex flex-col items-center gap-3">
-      {showApple && (
-        <a href={`/api/wallet/apple/${token}`} className="block" aria-label="Ajouter à Apple Wallet">
-          {USE_OFFICIAL_BADGES ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/badges/apple-wallet-fr.svg" alt="Ajouter à Apple Wallet" className="h-12" />
-          ) : (
-            <span className="inline-flex items-center gap-2 rounded-xl bg-black text-white px-5 py-3 font-semibold">
-              Ajouter à Apple Wallet
-            </span>
-          )}
-        </a>
-      )}
-      {showGoogle && (
-        <a href={`/api/wallet/google/${token}`} className="block" aria-label="Ajouter à Google Wallet">
-          {USE_OFFICIAL_BADGES ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/badges/google-wallet-fr.svg" alt="Ajouter à Google Wallet" className="h-12" />
-          ) : (
-            <span className="inline-flex items-center gap-2 rounded-xl bg-black text-white px-5 py-3 font-semibold">
-              Ajouter à Google Wallet
-            </span>
-          )}
-        </a>
-      )}
+    <div className={`wc-badges ${solo ? "wc-badges-solo" : ""}`}>
+      {showApple && <Badge kind="apple" token={token} />}
+      {showGoogle && <Badge kind="google" token={token} />}
     </div>
   );
 }

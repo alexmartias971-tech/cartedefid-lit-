@@ -1,0 +1,278 @@
+/* =====================================================================
+ *  Pages CLIENT (inscription /c/... et carte /carte/...) — charte Walty
+ *  Nuit prune, texte sable, dégradé coucher de soleil pour agir.
+ *  Tout est rangé sous .wc pour ne rien changer au tableau de bord.
+ * ===================================================================== */
+
+/* Le fond de la page entière (y compris quand on tire l'écran sur iPhone) */
+html:has(.wc), body:has(.wc) { background: #110c18; }
+
+.wc {
+  --wc-bg: #110c18;
+  --wc-surface: rgba(28, 21, 39, 0.82);
+  --wc-surface-solid: #1c1527;
+  --wc-surface2: #261d34;
+  --wc-line: rgba(243, 236, 227, 0.1);
+  --wc-line2: rgba(243, 236, 227, 0.2);
+  --wc-ink: #f3ece3;
+  --wc-muted: rgba(243, 236, 227, 0.74);
+  --wc-faint: rgba(243, 236, 227, 0.52);
+  --wc-orange: #ff5b1f;
+  --wc-orange-ink: #ff8b52;
+  --wc-mangue: #ffa23d;
+  --wc-hibiscus: #ff2e7e;
+  --wc-violet: #7b3cff;
+  --wc-lagon: #2de2c4;
+  --wc-grad: linear-gradient(115deg, #ffa23d 0%, #ff5b1f 28%, #ff2e7e 62%, #7b3cff 100%);
+  --wc-btn: linear-gradient(120deg, #ff6a26 0%, #ff3d62 60%, #e2307c 100%);
+  --wc-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 100dvh;
+  color: var(--wc-ink);
+  font-family: var(--font-manrope), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(520px 360px at 0% -6%, rgba(123, 60, 255, 0.28), transparent 65%),
+    radial-gradient(480px 340px at 100% 0%, rgba(255, 91, 31, 0.2), transparent 62%),
+    radial-gradient(560px 420px at 50% 108%, rgba(226, 48, 124, 0.14), transparent 62%),
+    var(--wc-bg);
+  overflow-x: clip;
+}
+.wc ::selection { background: rgba(255, 91, 31, 0.5); color: #fff; }
+.wc :focus-visible { outline: 2.5px solid var(--wc-mangue); outline-offset: 3px; border-radius: 10px; }
+.wc a { color: inherit; }
+
+/* ---------- Colonne centrale ---------- */
+.wc-main {
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  padding: max(14px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+/* ---------- Typo ---------- */
+.wc-display { font-family: var(--font-unbounded), var(--font-manrope), sans-serif; font-weight: 800; letter-spacing: -0.03em; line-height: 1.08; overflow-wrap: anywhere; }
+.wc-h1 { font-size: clamp(24px, 6.6vw, 30px); }
+.wc-h2 { font-family: var(--font-unbounded), var(--font-manrope), sans-serif; font-weight: 600; font-size: 17px; letter-spacing: -0.02em; line-height: 1.25; }
+.wc-kicker { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; background: var(--wc-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.wc-muted { color: var(--wc-muted); }
+.wc-faint { color: var(--wc-faint); }
+.wc-small { font-size: 14px; }
+.wc-center { text-align: center; }
+
+/* ---------- Panneaux en verre ---------- */
+.wc-panel {
+  background: var(--wc-surface);
+  border: 1px solid var(--wc-line);
+  border-radius: 24px;
+  padding: 18px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.wc-panel-glow { background: linear-gradient(rgba(30, 22, 43, 0.94), rgba(30, 22, 43, 0.94)) padding-box, var(--wc-grad) border-box; border: 1.5px solid transparent; }
+
+/* ---------- En-tête du commerce (inscription) ---------- */
+.wc-shop {
+  position: relative;
+  overflow: hidden;
+  border-radius: 28px;
+  text-align: center;
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  isolation: isolate;
+}
+.wc-shop::after {
+  /* reflet doux, comme une carte qu'on tient à la lumière */
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 32%, rgba(255, 255, 255, 0) 70%, rgba(255, 255, 255, 0.06) 100%);
+  mix-blend-mode: screen;
+}
+.wc-shop-strip { width: 100%; aspect-ratio: 375 / 144; }
+.wc-shop-strip > svg { width: 100%; height: 100%; display: block; }
+.wc-shop-body { position: relative; z-index: 3; padding: 0 18px 22px; display: grid; justify-items: center; gap: 6px; }
+.wc-shop-logo {
+  width: 72px; height: 72px; margin-top: 16px; border-radius: 20px; background: #fff; padding: 6px; object-fit: contain;
+  box-shadow: 0 10px 24px -10px rgba(0, 0, 0, 0.55), 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+.wc-shop-nologo { height: 10px; }
+.wc-nowrap { white-space: nowrap; }
+.wc-grad-text { background: var(--wc-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.wc-shop-name { font-family: var(--font-unbounded), var(--font-manrope), sans-serif; font-weight: 800; font-size: clamp(22px, 6.4vw, 28px); letter-spacing: -0.03em; line-height: 1.1; overflow-wrap: anywhere; margin-top: 4px; }
+.wc-shop-pitch { font-weight: 700; font-size: 16px; line-height: 1.35; opacity: 0.95; }
+.wc-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 6px 13px; font-size: 14px; font-weight: 800; line-height: 1.2; }
+.wc-chip-soft { background: rgba(255, 255, 255, 0.16); }
+
+/* ---------- Champs du formulaire ---------- */
+.wc-form { display: grid; gap: 16px; }
+.wc-field { display: grid; gap: 7px; min-width: 0; }
+.wc-label { font-size: 15px; font-weight: 800; color: var(--wc-ink); }
+.wc-label small { font-weight: 600; color: var(--wc-faint); font-size: 13px; }
+.wc-input {
+  width: 100%; min-width: 0; height: 56px; border-radius: 16px; border: 1.5px solid var(--wc-line2);
+  background: rgba(10, 7, 15, 0.6); color: var(--wc-ink); padding: 0 16px; font-size: 18px; font-weight: 600;
+  transition: border-color .15s, box-shadow .15s;
+}
+.wc-input::placeholder { color: rgba(243, 236, 227, 0.36); font-weight: 500; }
+.wc-input:focus { outline: none; border-color: var(--wc-orange); box-shadow: 0 0 0 4px rgba(255, 91, 31, 0.22); }
+select.wc-input { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%23f3ece3' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 16px center; padding-right: 40px; }
+select.wc-input option { color: #160f20; background: #fff; }
+.wc-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.wc-switch-link { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--wc-orange-ink); font-weight: 700; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* Cases à cocher : toute la ligne est cliquable, grosse case */
+.wc-check {
+  position: relative; display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start;
+  padding: 13px 14px; border-radius: 16px; border: 1.5px solid var(--wc-line); background: rgba(255, 255, 255, 0.03);
+  font-size: 15px; line-height: 1.4; color: var(--wc-muted); cursor: pointer; transition: border-color .15s, background .15s;
+}
+.wc-check:has(input:checked) { border-color: rgba(45, 226, 196, 0.55); background: rgba(45, 226, 196, 0.07); color: var(--wc-ink); }
+.wc-check-required:not(:has(input:checked)) { border-color: rgba(255, 162, 61, 0.45); }
+.wc-check input { position: absolute; opacity: 0; width: 28px; height: 28px; margin: 0; left: 14px; top: 13px; cursor: pointer; }
+.wc-box {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; border: 2px solid var(--wc-line2);
+  background: rgba(10, 7, 15, 0.6); transition: background .15s, border-color .15s;
+}
+.wc-box svg { width: 16px; height: 16px; opacity: 0; transform: scale(0.6); transition: opacity .15s, transform .2s var(--wc-ease); }
+.wc-check input:checked + .wc-box { background: var(--wc-lagon); border-color: var(--wc-lagon); }
+.wc-check input:checked + .wc-box svg { opacity: 1; transform: scale(1); }
+.wc-check input:focus-visible + .wc-box { outline: 2.5px solid var(--wc-mangue); outline-offset: 3px; }
+.wc-check a { color: var(--wc-orange-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.wc-req { color: var(--wc-mangue); font-weight: 800; }
+
+/* ---------- Boutons ---------- */
+.wc-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+  min-height: 52px; padding: 12px 20px; border-radius: 999px; border: 1px solid transparent;
+  font-weight: 800; font-size: 16px; line-height: 1.2; text-align: center; text-decoration: none; cursor: pointer;
+  transition: transform .12s var(--wc-ease), opacity .15s, background .15s;
+}
+.wc-btn:active:not(:disabled) { transform: scale(0.97); }
+.wc-btn:disabled { opacity: 0.6; cursor: progress; }
+.wc-btn-primary { background: var(--wc-btn); color: #fff; box-shadow: 0 16px 34px -14px rgba(255, 46, 126, 0.9); }
+.wc-btn-xl { min-height: 62px; font-size: 19px; font-family: var(--font-unbounded), var(--font-manrope), sans-serif; font-weight: 600; letter-spacing: -0.01em; }
+.wc-btn-ghost { background: rgba(255, 255, 255, 0.06); border-color: var(--wc-line2); color: var(--wc-ink); }
+.wc-btn-ghost:hover { background: rgba(255, 255, 255, 0.11); }
+.wc-spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid rgba(255, 255, 255, 0.35); border-top-color: #fff; animation: wc-spin .8s linear infinite; }
+@keyframes wc-spin { to { transform: rotate(360deg); } }
+
+/* Les boutons partagés (ShareButton…) prennent le style Walty sur ces pages */
+.wc .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; padding: 12px 20px; border-radius: 999px; font-weight: 800; font-size: 16px; }
+.wc .btn-primary { background: var(--wc-btn); color: #fff; box-shadow: 0 14px 30px -14px rgba(255, 46, 126, 0.85); }
+.wc .btn-primary:hover:not(:disabled) { background: var(--wc-btn); filter: brightness(1.06); }
+.wc .btn-secondary { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--wc-line2); color: var(--wc-ink); }
+.wc .btn-secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.11); }
+
+/* ---------- Messages ---------- */
+.wc-alert {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; border-radius: 16px; padding: 13px 14px;
+  font-size: 15px; line-height: 1.45; font-weight: 600;
+}
+.wc-alert-icon { font-size: 20px; line-height: 1.2; }
+.wc-alert-error { background: rgba(255, 46, 126, 0.12); border: 1.5px solid rgba(255, 46, 126, 0.5); color: #ffd0de; }
+.wc-alert-off { background: rgba(255, 162, 61, 0.1); border: 1.5px solid rgba(255, 162, 61, 0.4); color: #ffe0bd; }
+.wc-hello {
+  display: flex; align-items: center; gap: 12px; border-radius: 20px; padding: 12px 14px;
+  background: linear-gradient(rgba(22, 40, 44, 0.92), rgba(22, 40, 44, 0.92)) padding-box, linear-gradient(120deg, #2de2c4, #7b3cff) border-box;
+  border: 1.5px solid transparent; color: var(--wc-ink); font-weight: 700; font-size: 16px; line-height: 1.35;
+  animation: wc-pop .5s var(--wc-ease) both;
+}
+.wc-hello-wave { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; background: rgba(45, 226, 196, 0.16); font-size: 24px; }
+.wc-hello small { display: block; font-weight: 600; font-size: 13.5px; color: var(--wc-muted); }
+
+/* ---------- Page carte ---------- */
+.wc-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.wc-top-logo { flex: none; width: 46px; height: 46px; border-radius: 14px; background: #fff; padding: 3px; object-fit: contain; box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.6); }
+.wc-top-dot { flex: none; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-family: var(--font-unbounded), sans-serif; font-weight: 800; font-size: 20px; }
+.wc-top-name { min-width: 0; font-weight: 800; font-size: 15px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-top-sub { font-size: 13px; color: var(--wc-faint); font-weight: 600; }
+.wc-intro { display: grid; gap: 6px; }
+.wc-sentence { font-size: 16px; color: var(--wc-muted); font-weight: 600; }
+
+/* Le gros bouton Wallet */
+.wc-wallet { display: grid; justify-items: center; gap: 10px; padding: 18px 16px 16px; text-align: center; }
+.wc-wallet-title { font-size: 15px; font-weight: 800; color: var(--wc-ink); }
+.wc-wallet-note { font-size: 13.5px; color: var(--wc-faint); font-weight: 600; }
+.wc-badges { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
+.wc-badge-link { display: block; border-radius: 12px; transition: transform .12s var(--wc-ease); -webkit-tap-highlight-color: transparent; }
+.wc-badge-link:active { transform: scale(0.97); }
+.wc-badge { display: block; width: auto; height: 50px; }
+.wc-badges-solo .wc-badge { height: 64px; }
+.wc-badge-text {
+  display: inline-flex; align-items: center; gap: 10px; height: 54px; padding: 0 22px; border-radius: 14px;
+  background: #000; color: #fff; font-weight: 700; font-size: 17px; border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+/* La carte du commerce, mise en scène */
+.wc-stage { position: relative; display: flex; justify-content: center; padding: 6px 0 4px; isolation: isolate; }
+.wc-stage::before {
+  content: ""; position: absolute; z-index: -1; left: 50%; top: 52%; width: 82%; height: 76%; transform: translate(-50%, -50%);
+  border-radius: 50%; background: var(--wc-grad); filter: blur(46px); opacity: 0.42;
+}
+.wc-stage .card-preview { filter: drop-shadow(0 26px 34px rgba(0, 0, 0, 0.55)); animation: wc-rise .7s var(--wc-ease) both; }
+
+/* Cadeau prêt */
+.wc-gift { border-radius: 28px; padding: 22px 18px; text-align: center; display: grid; justify-items: center; gap: 8px; box-shadow: 0 30px 60px -28px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1) inset; animation: wc-pop .6s var(--wc-ease) both; }
+.wc-gift-qr { width: 200px; height: 200px; border-radius: 18px; background: #fff; padding: 10px; }
+
+/* Listes (offres, cadeaux) */
+.wc-list { display: grid; gap: 8px; }
+.wc-ticket {
+  position: relative; display: grid; gap: 2px; padding: 12px 14px 12px 18px; border-radius: 16px;
+  background: rgba(255, 162, 61, 0.09); border: 1px dashed rgba(255, 162, 61, 0.5); font-weight: 700; font-size: 15px;
+}
+.wc-ticket::before { content: ""; position: absolute; left: -7px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; background: var(--wc-surface-solid); border-right: 1px dashed rgba(255, 162, 61, 0.5); }
+.wc-ticket small { font-weight: 600; font-size: 13px; color: var(--wc-faint); }
+.wc-reward { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.04); font-size: 15px; }
+.wc-reward b { white-space: nowrap; color: var(--wc-faint); }
+.wc-reward-ok { background: rgba(45, 226, 196, 0.1); color: var(--wc-ink); font-weight: 700; }
+.wc-reward-ok b { color: var(--wc-lagon); }
+.wc-tier { display: flex; align-items: center; gap: 12px; }
+.wc-tier-dot { flex: none; width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; font-size: 20px; background: rgba(255, 255, 255, 0.08); }
+.wc-msg { display: flex; gap: 10px; align-items: flex-start; border-radius: 14px; padding: 11px 13px; background: rgba(123, 60, 255, 0.14); border: 1px solid rgba(185, 160, 255, 0.3); font-size: 15px; font-weight: 600; }
+.wc-steps { display: grid; gap: 8px; }
+.wc-steps li { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start; font-size: 15px; color: var(--wc-muted); }
+.wc-steps li b { color: var(--wc-ink); }
+.wc-steps-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); font-weight: 800; font-size: 13px; color: var(--wc-ink); }
+
+/* Repli « Comment ça marche » */
+.wc-details summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; list-style: none; font-weight: 800; font-size: 16px; }
+.wc-details summary::-webkit-details-marker { display: none; }
+.wc-details summary::after { content: "+"; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); font-size: 20px; font-weight: 600; transition: transform .2s var(--wc-ease); }
+.wc-details[open] summary::after { transform: rotate(45deg); }
+.wc-details ul { margin-top: 12px; display: grid; gap: 10px; }
+.wc-details li { display: grid; grid-template-columns: 28px 1fr; gap: 6px; font-size: 15px; color: var(--wc-muted); }
+.wc-details li b { color: var(--wc-ink); }
+
+/* ---------- Pied de page « Propulsé par Walty » ---------- */
+.wc-foot { display: grid; justify-items: center; gap: 8px; padding: 10px 0 6px; text-align: center; font-size: 13px; color: var(--wc-faint); }
+.wc-foot a { text-decoration: underline; text-underline-offset: 3px; }
+.wc-powered { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px 6px 7px; border-radius: 999px; border: 1px solid var(--wc-line); background: rgba(255, 255, 255, 0.03); color: var(--wc-muted); font-size: 12.5px; font-weight: 700; text-decoration: none !important; }
+.wc-wordmark { font-family: var(--font-unbounded), var(--font-manrope), sans-serif; font-weight: 800; letter-spacing: -0.05em; font-size: 14px; color: var(--wc-ink); }
+.wc-wordmark i { display: inline-block; width: 0.26em; height: 0.26em; margin-left: 0.06em; border-radius: 50%; background: linear-gradient(135deg, #ffb35c 0%, #ff5b1f 55%, #e8305f 100%); }
+
+/* ---------- Animations (coupées si l'utilisateur le demande) ---------- */
+@keyframes wc-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes wc-rise { from { opacity: 0; transform: translateY(18px) rotate(-1.5deg); } to { opacity: 1; transform: none; } }
+.wc-in { animation: wc-pop .5s var(--wc-ease) both; }
+.wc-in-2 { animation-delay: .08s; }
+.wc-in-3 { animation-delay: .16s; }
+@media (prefers-reduced-motion: reduce) {
+  .wc *, .wc *::before, .wc *::after { animation: none !important; transition: none !important; }
+}
+
+/* Écran large : un peu plus d'air */
+@media (min-width: 768px) {
+  .wc-main { padding-top: 36px; gap: 18px; }
+  .wc-panel { padding: 22px; }
+}
