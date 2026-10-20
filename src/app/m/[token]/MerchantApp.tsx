@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import NotificationForm, { type NotificationSubmit } from "@/components/NotificationForm";
 
-type Tab = "scan" | "notif" | "clients";
+/**
+ * Ancienne page commerçant (/m/<lien>, code PIN). L'espace commerçant est désormais sur walty.fr/espace
+ * (gérant : e-mail + mot de passe ; employé : lien + code PIN). Ici restent le scanner et la liste des clients.
+ * Les messages (notifications) sont réservés au gérant connecté sur walty.fr/espace : l'onglet « Notifier » est retiré.
+ */
+const NEW_SPACE = "https://walty.fr/espace";
+
+type Tab = "scan" | "clients";
 type CardInfo = {
   first_name: string;
   last_name: string | null;
@@ -87,29 +93,33 @@ export default function MerchantApp(props: {
         </button>
       </header>
 
-      <nav className="grid grid-cols-3 gap-2 px-4 py-2 sticky top-0 bg-[var(--fond)] z-10">
+      <div className="mx-4 my-2 rounded-xl border border-gray-300 bg-white p-3 text-sm space-y-1" role="status">
+        <p className="font-semibold">Votre espace commerçant est désormais sur walty.fr/espace</p>
+        <p className="text-gray-600">Messages, offres, programme, historique et chiffres : connectez-vous là-bas. Ici, le scanner continue de fonctionner.</p>
+        <a href={NEW_SPACE} className="underline font-semibold">
+          Ouvrir walty.fr/espace
+        </a>
+      </div>
+
+      <nav className="grid grid-cols-2 gap-2 px-4 py-2 sticky top-0 bg-[var(--fond)] z-10">
         {(
           [
             ["scan", "📷 Scanner"],
-            ["notif", "🔔 Notifier"],
             ["clients", "👥 Clients"],
           ] as const
-        ).map(([key, label]) =>
-          key === "notif" && !props.canNotify ? null : (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`btn text-sm ${tab === key ? "btn-primary" : "btn-secondary"}`}
-            >
-              {label}
-            </button>
-          ),
-        )}
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`btn text-sm ${tab === key ? "btn-primary" : "btn-secondary"}`}
+          >
+            {label}
+          </button>
+        ))}
       </nav>
 
       <div className="p-4 flex-1">
         {tab === "scan" && <Scanner />}
-        {tab === "notif" && props.canNotify && <Notifications businessName={props.businessName} />}
         {tab === "clients" && <Clients />}
       </div>
     </div>
@@ -396,92 +406,6 @@ function Scanner() {
         <button onClick={startCamera} className="btn btn-secondary w-full">
           📷 Client suivant
         </button>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------- NOTIFICATIONS ------------------------------- */
-type NotifRow = {
-  id: string;
-  message: string;
-  status: string;
-  send_at: string;
-  repeat_every_days: number | null;
-  recipients_count: number | null;
-};
-const STATUS: Record<string, string> = {
-  scheduled: "Programmée",
-  sending: "En cours",
-  sent: "Envoyée",
-  cancelled: "Annulée",
-  failed: "Échec",
-  skipped: "Sautée (limite)",
-};
-
-function Notifications({ businessName }: { businessName: string }) {
-  const [list, setList] = useState<NotifRow[]>([]);
-  const [remaining, setRemaining] = useState<number | undefined>(undefined);
-
-  const load = useCallback(() => {
-    return api<{ notifications: NotifRow[]; remaining: number }>("/api/merchant/notifications").then((res) => {
-      if (res.ok) {
-        setList(res.notifications);
-        setRemaining(res.remaining);
-      }
-    });
-  }, []);
-  useEffect(() => {
-    api<{ notifications: NotifRow[]; remaining: number }>("/api/merchant/notifications").then((res) => {
-      if (res.ok) {
-        setList(res.notifications);
-        setRemaining(res.remaining);
-      }
-    });
-  }, []);
-
-  async function submit(p: NotificationSubmit) {
-    const res = await api<{ sentNow?: boolean }>("/api/merchant/notifications", {
-      method: "POST",
-      body: JSON.stringify(p),
-    });
-    await load();
-    return res;
-  }
-
-  async function cancel(id: string) {
-    await api(`/api/merchant/notifications?id=${id}`, { method: "DELETE" });
-    await load();
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="panel">
-        <NotificationForm businessName={businessName} onSubmit={submit} remainingThisWeek={remaining} />
-      </div>
-      {list.length > 0 && (
-        <ul className="space-y-2">
-          {list.map((n) => (
-            <li key={n.id} className="panel py-3 text-sm space-y-1">
-              <div className="flex justify-between gap-2 text-gray-500">
-                <span>
-                  {fmt(n.send_at)}
-                  {n.repeat_every_days ? ` · tous les ${n.repeat_every_days} j` : ""}
-                </span>
-                <span>
-                  {STATUS[n.status] ?? n.status}
-                  {n.recipients_count !== null ? ` · ${n.recipients_count} clients` : ""}
-                </span>
-              </div>
-              <p>{n.message}</p>
-              {n.status === "scheduled" && (
-                <button onClick={() => cancel(n.id)} className="text-red-700 underline">
-                  Annuler
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

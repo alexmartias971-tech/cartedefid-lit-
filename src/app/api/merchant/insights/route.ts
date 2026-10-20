@@ -1,6 +1,7 @@
 import { getMerchantSession } from "@/lib/merchant-session";
 import { DAY_MS, expired, fetchAll, GP_OFFSET_MS, json, REWARD_TYPES, VISIT_TYPES } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isEssentiel, planRefused } from "@/lib/walty-plan";
 
 /** Début (heure de Guadeloupe) du mois, `back` mois en arrière. */
 function monthStart(back: number) {
@@ -11,11 +12,12 @@ function monthStart(back: number) {
 /**
  * Chiffres détaillés pour l'espace commerçant de walty.fr (en plus de « stats ») :
  * jours et heures d'affluence, 6 derniers mois, fidélité (clients revenus, endormis), téléphones utilisés.
- * Seulement des totaux : aucune donnée personnelle.
+ * Seulement des totaux : aucune donnée personnelle. Formule Essentiel : 403 (Tout compris seulement).
  */
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return expired();
+  if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const biz = session.businessId;
   const since6m = monthStart(5).toISOString();

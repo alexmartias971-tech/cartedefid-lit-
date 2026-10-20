@@ -1,10 +1,12 @@
 import { NextResponse, after } from "next/server";
 import { loadCardBundlesByIds } from "@/lib/cards";
 import { getMerchantSession } from "@/lib/merchant-session";
+import { getMerchantRole } from "@/lib/merchant-role";
 import { fetchAll } from "@/lib/merchant-space";
 import { createNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCards } from "@/lib/wallet-sync";
+import { isEssentiel, planRefused } from "@/lib/walty-plan";
 
 const noStore = { "Cache-Control": "no-store" };
 
@@ -12,10 +14,12 @@ const noStore = { "Cache-Control": "no-store" };
  * Offres ponctuelles du commerce (ex : « -20 % ce week-end ») pour l'espace commerçant de walty.fr.
  * Même fonctionnement que le bouton « Offre à tous les clients » du tableau de bord admin :
  * l'offre s'ajoute sur la carte de chaque client et se valide en caisse au scan.
+ * Formule Essentiel : pas d'offres (403, Tout compris seulement).
  */
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const { data: program } = await supabase
     .from("loyalty_programs")
@@ -76,8 +80,13 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getMerchantSession();
   if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  if (await isEssentiel(session.businessId)) return planRefused();
   if (!session.canSendNotifications) {
     return NextResponse.json({ ok: false, error: "Les offres ne sont pas activées pour cet accès." }, { status: 403 });
+  }
+  // gérant prouvé (connexion par mot de passe) : un employé qui connaît le PIN ne peut pas créer d'offre
+  if (!(await getMerchantRole())?.manager) {
+    return NextResponse.json({ ok: false, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour créer une offre." }, { status: 403 });
   }
   const body = (await request.json().catch(() => ({}))) as { title?: string; days?: number | null; notify?: boolean };
   const title = String(body.title ?? "").trim().slice(0, 120);

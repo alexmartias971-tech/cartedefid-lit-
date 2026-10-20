@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getMerchantSession } from "@/lib/merchant-session";
 import { fetchAll } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isEssentiel, planRefused } from "@/lib/walty-plan";
 
 const DAY = 86400000;
 const GP_OFFSET = 4 * 3600 * 1000; // Guadeloupe = UTC-4, sans heure d'été
@@ -13,10 +14,11 @@ function monthStart(back = 0) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1) + GP_OFFSET);
 }
 
-/** Statistiques du commerce, pour l'espace commerçant (walty.fr/espace). */
+/** Statistiques du commerce, pour l'espace commerçant (walty.fr/espace). Formule Essentiel : 403 (Tout compris seulement). */
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const biz = session.businessId;
   const thisMonth = monthStart(0).toISOString();

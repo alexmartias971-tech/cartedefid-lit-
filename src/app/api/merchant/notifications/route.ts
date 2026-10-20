@@ -1,16 +1,26 @@
 import { NextResponse } from "next/server";
 import { guadeloupeLocalToDate } from "@/lib/format";
-import { getMerchantSession } from "@/lib/merchant-session";
+import { getMerchantRole } from "@/lib/merchant-role";
 import { createNotification, weekBounds } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isEssentiel, planRefused } from "@/lib/walty-plan";
 
+/**
+ * Messages (notifications) du commerce : lister, envoyer / programmer, annuler.
+ * RÉSERVÉ AU GÉRANT (session ouverte par e-mail/identifiant + mot de passe, preuve signée commercant_role,
+ * voir src/lib/merchant-role.ts) : un employé qui connaît le lien d'accès et le code PIN ne peut plus écrire
+ * à tous les clients en appelant cette adresse directement. L'ancienne page /m/<lien> (code PIN seulement)
+ * n'a plus l'onglet « Notifier » : elle renvoie vers walty.fr/espace.
+ * Formule Essentiel : pas de messages (403, Tout compris seulement).
+ */
 async function session403() {
-  const session = await getMerchantSession();
-  if (!session)
+  const role = await getMerchantRole();
+  if (!role)
     return {
       session: null,
-      res: NextResponse.json({ ok: false, error: "Session expirée : retape ton code PIN." }, { status: 401 }),
+      res: NextResponse.json({ ok: false, error: "Session expirée : reconnectez-vous." }, { status: 401 }),
     };
+  const session = role.session;
   if (!session.canSendNotifications) {
     return {
       session: null,
@@ -20,6 +30,16 @@ async function session403() {
       ),
     };
   }
+  if (!role.manager) {
+    return {
+      session: null,
+      res: NextResponse.json(
+        { ok: false, forbidden: true, error: "Réservé au gérant : connectez-vous sur walty.fr/espace avec votre e-mail et votre mot de passe." },
+        { status: 403 },
+      ),
+    };
+  }
+  if (await isEssentiel(session.businessId)) return { session: null, res: planRefused() };
   return { session, res: null };
 }
 

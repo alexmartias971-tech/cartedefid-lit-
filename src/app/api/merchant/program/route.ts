@@ -1,9 +1,11 @@
 import { after } from "next/server";
 import { describeProgram } from "@/lib/card-state";
 import { getMerchantSession, type MerchantSession } from "@/lib/merchant-session";
+import { getMerchantRole } from "@/lib/merchant-role";
 import { expired, json, resyncProgramCards, UUID } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
+import { getWaltyPlan, planRefused, type PlanId } from "@/lib/walty-plan";
 
 /**
  * « Mon programme » dans l'espace commerçant de walty.fr : les règles de la carte, à lire et à modifier.
@@ -13,6 +15,8 @@ import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
  *   les niveaux, l'activation ou la pause de la carte, les suppressions.
  * - Les modifications demandent l'accès « gérant » (celui qui peut envoyer des messages) et une session active.
  * Mêmes vérifications que le tableau de bord admin ; les cartes des clients se mettent à jour ensuite.
+ * - Formule Essentiel (voir src/lib/walty-plan.ts) : l'offre d'anniversaire, le bonus de parrainage et le lien d'avis Google
+ *   ne se modifient pas ici (403 « Tout compris ») ; « plan » est renvoyé pour que walty.fr masque ces champs.
  */
 
 type Loaded = { business: Business; program: Program; tiers: Tier[]; catalog: CatalogReward[] };
@@ -36,11 +40,12 @@ async function load(businessId: string): Promise<Loaded | null> {
   };
 }
 
-function view(d: Loaded, session: MerchantSession) {
+function view(d: Loaded, session: MerchantSession, plan: PlanId) {
   const p = d.program;
   return {
     ok: true,
     canEdit: session.canSendNotifications,
+    plan,
     updated_at: p.updated_at,
     settings: {
       reward_description: p.reward_description,
@@ -87,7 +92,7 @@ export async function GET() {
   if (!session) return expired();
   const d = await load(session.businessId);
   if (!d) return json({ ok: false, error: "Carte introuvable. Contactez Walty." }, 404);
-  return json(view(d, session));
+  return json(view(d, session, (await getWaltyPlan(session.businessId)).plan));
 }
 
 type Body = {
@@ -119,6 +124,10 @@ export async function POST(request: Request) {
   if (!session.canSendNotifications) {
     return json({ ok: false, error: "Les réglages se modifient avec l'accès du gérant. Demandez à Walty." }, 403);
   }
+  // gérant prouvé (connexion par mot de passe) : un employé qui connaît le PIN ne peut pas changer le programme
+  if (!(await getMerchantRole())?.manager) {
+    return json({ ok: false, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour modifier les réglages." }, 403);
+  }
   if (!(request.headers.get("content-type") ?? "").includes("application/json")) {
     return json({ ok: false, error: "Demande invalide." }, 415);
   }
@@ -128,6 +137,7 @@ export async function POST(request: Request) {
   const d = await load(session.businessId);
   if (!d) return json({ ok: false, error: "Carte introuvable. Contactez Walty." }, 404);
   const { program: p, business: b } = d;
+  const { plan } = await getWaltyPlan(session.businessId);
   if (body.updated_at && body.updated_at !== p.updated_at) {
     return json({ ok: false, conflict: true, error: "Les réglages viennent d'être modifiés ailleurs (par Walty ?). Rechargez puis recommencez." }, 409);
   }
@@ -194,6 +204,15 @@ export async function POST(request: Request) {
     businessFields[key] = url;
   }
 
+  // Formule Essentiel : anniversaire, parrainage et lien d'avis Google restent tels quels (Tout compris seulement)
+  if (plan === "essentiel") {
+    const changed =
+      (has("birthday_offer") && (programFields.birthday_offer ?? null) !== (p.birthday_offer ?? null)) ||
+      (has("referral_bonus") && programFields.referral_bonus !== (p.referral_bonus ?? 0)) ||
+      (bHas("google_review_url") && (businessFields.google_review_url ?? null) !== (safeUrl(b.google_review_url) || null));
+    if (changed) return planRefused();
+  }
+
   // Catalogue de cadeaux (mode points) : modifier, ajouter, masquer. Pas de suppression ici.
   type CatalogChange = { id?: string; name: string; cost: number; is_active: boolean };
   let catalogChanges: CatalogChange[] | null = null;
@@ -257,5 +276,5 @@ export async function POST(request: Request) {
   if (!fresh) return json({ ok: false, error: "Carte introuvable." }, 404);
   // Les cartes déjà dans les téléphones se mettent à jour en arrière-plan
   after(() => resyncProgramCards(fresh.program, fresh.business));
-  return json({ ...view(fresh, session), done: "Enregistré ✓ Les cartes de vos clients se mettent à jour dans quelques instants." });
+  return json({ ...view(fresh, session, plan), done: "Enregistré ✓ Les cartes de vos clients se mettent à jour dans quelques instants." });
 }

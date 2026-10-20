@@ -5,6 +5,7 @@ import { computeCardState, formatEuro, formatLap } from "@/lib/card-state";
 import { getMerchantSession } from "@/lib/merchant-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CardBundle } from "@/lib/types";
+import { visitInfo } from "@/lib/visit-info";
 import { syncCard, syncCards } from "@/lib/wallet-sync";
 
 type Action = "lookup" | "stamp" | "redeem" | "purchase" | "reward" | "cashback" | "coupon" | "undo" | "lap";
@@ -68,7 +69,9 @@ export async function POST(request: Request) {
   if (before.program.business_id !== session.businessId) {
     return NextResponse.json({ ok: false, error: "Cette carte appartient à un autre commerce." }, { status: 403 });
   }
-  if (body.action === "lookup") return NextResponse.json({ ok: true, ...view(before) });
+  // Fiche éclair (walty.fr/espace) : dernière visite, passages du jour, limite (sans numéro de carte)
+  const flash = async (b: CardBundle) => ({ customer_id: b.customer.id, visit: await visitInfo(b).catch(() => null) });
+  if (body.action === "lookup") return NextResponse.json({ ok: true, ...view(before), ...(await flash(before)) });
 
   const amount = Math.round(Number(String(body.amount ?? "").replace(",", ".")) * 100) / 100;
   const base = { p_serial: serial, p_scanner_id: session.scannerId };
@@ -126,7 +129,7 @@ export async function POST(request: Request) {
     total?: number;
     overtaken?: { card_id: string; rank: number }[];
   };
-  if (!result.ok) return NextResponse.json(result, { status: 409 });
+  if (!result.ok) return NextResponse.json({ ...result, ...(body.action === "stamp" ? await flash(before) : {}) }, { status: 409 });
 
   const afterBundle = await loadCardBundle("serial_number", serial);
   const cardId = before.card.id;
@@ -206,5 +209,5 @@ export async function POST(request: Request) {
     }
   });
 
-  return NextResponse.json({ ok: true, done, ...(afterBundle ? view(afterBundle) : {}) });
+  return NextResponse.json({ ok: true, done, ...(afterBundle ? { ...view(afterBundle), ...(await flash(afterBundle)) } : {}) });
 }
