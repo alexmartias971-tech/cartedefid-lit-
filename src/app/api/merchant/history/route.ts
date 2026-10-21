@@ -15,6 +15,7 @@ import {
 } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCard } from "@/lib/wallet-sync";
+import { getMerchantRole } from "@/lib/merchant-role";
 
 const FILTERS: Record<string, readonly string[] | null> = {
   all: null,
@@ -32,6 +33,10 @@ const FILTERS: Record<string, readonly string[] | null> = {
 export async function GET(request: Request) {
   const session = await getMerchantSession();
   if (!session) return expired();
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   const params = new URL(request.url).searchParams;
   const today = gpDay(Date.now());
   const day = params.get("day") || today;

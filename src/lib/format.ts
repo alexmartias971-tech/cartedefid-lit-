@@ -33,8 +33,34 @@ export function slugify(text: string): string {
 }
 
 /** Garde uniquement les chiffres et le + ; "0690 12 34 56" → "0690123456". */
+// Numéro au format international : « 0690 12 34 56 », « 690123456 » et « +590 690 12 34 56 » donnent tous
+// « +590690123456 » (même carte pour le même client). DOM : 0590/0690/0691 → +590, 0596/0696/0697 → +596,
+// 0594/0694 → +594, 0262/0692/0693/0269/0639 → +262 ; les autres 0X… (10 chiffres) → +33.
 export function normalizePhone(value: string): string {
-  return value.replace(/[^\d+]/g, "");
+  let v = value.replace(/[^\d+]/g, "");
+  if (v.startsWith("00")) v = "+" + v.slice(2);
+  if (/^\d{9}$/.test(v) && /^(590|690|691|596|696|697|594|694|262|692|693|269|639)/.test(v)) v = "0" + v;
+  if (/^0\d{9}$/.test(v)) {
+    const dom: [RegExp, string][] = [
+      [/^0(590|690|691)/, "+590"], [/^0(596|696|697)/, "+596"], [/^0(594|694)/, "+594"], [/^0(262|692|693|269|639)/, "+262"],
+    ];
+    for (const [re, indicatif] of dom) if (re.test(v)) return indicatif + v.slice(1);
+    return "+33" + v.slice(1);
+  }
+  if (/^(590|596|594|262|33)\d{9}$/.test(v)) return "+" + v;
+  return v;
+}
+
+/** Les écritures possibles d'un même numéro (anciennes fiches enregistrées telles que tapées). */
+export function phoneVariants(normalized: string): string[] {
+  const out = new Set([normalized]);
+  const m = /^\+(590|596|594|262|33)(\d{9})$/.exec(normalized);
+  if (m) {
+    out.add("0" + m[2]);
+    out.add(m[1] + m[2]);
+    out.add("00" + m[1] + m[2]);
+  }
+  return [...out];
 }
 
 /** Date lisible à l'heure de la Guadeloupe. */

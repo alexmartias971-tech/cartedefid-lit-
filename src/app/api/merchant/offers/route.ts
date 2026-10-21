@@ -19,6 +19,10 @@ const noStore = { "Cache-Control": "no-store" };
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const { data: program } = await supabase

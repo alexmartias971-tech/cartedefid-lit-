@@ -7,6 +7,7 @@ import { expired, json, pitchVous } from "@/lib/merchant-space";
 import { renderStripFor } from "@/lib/strip";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
+import { getMerchantRole } from "@/lib/merchant-role";
 
 export const maxDuration = 30;
 
@@ -31,6 +32,10 @@ async function logoData(url: string | null): Promise<string | null> {
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return expired();
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   const supabase = createAdminClient();
 
   const [{ data: biz }, { data: programData }] = await Promise.all([

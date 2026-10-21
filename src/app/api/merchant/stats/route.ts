@@ -3,6 +3,7 @@ import { getMerchantSession } from "@/lib/merchant-session";
 import { fetchAll } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isEssentiel, planRefused } from "@/lib/walty-plan";
+import { getMerchantRole } from "@/lib/merchant-role";
 
 const DAY = 86400000;
 const GP_OFFSET = 4 * 3600 * 1000; // Guadeloupe = UTC-4, sans heure d'été
@@ -18,6 +19,10 @@ function monthStart(back = 0) {
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const biz = session.businessId;

@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { normalizePhone } from "@/lib/format";
+import { normalizePhone, phoneVariants } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type SignupState = { error?: string };
@@ -75,7 +75,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
       .from("customers")
       .select("id, first_name, cards(web_token)")
       .eq("business_id", business.id)
-      .eq(column, value)
+      .in(column, column === "phone" ? phoneVariants(value) : [value])
       .limit(1)
       .maybeSingle();
     existing = (data as Existing | null) ?? null;

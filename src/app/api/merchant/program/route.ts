@@ -90,6 +90,10 @@ function view(d: Loaded, session: MerchantSession, plan: PlanId) {
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return expired();
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   const d = await load(session.businessId);
   if (!d) return json({ ok: false, error: "Carte introuvable. Contactez Walty." }, 404);
   return json(view(d, session, (await getWaltyPlan(session.businessId)).plan));

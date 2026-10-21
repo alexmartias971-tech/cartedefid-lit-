@@ -2,6 +2,7 @@ import { getMerchantSession } from "@/lib/merchant-session";
 import { DAY_MS, expired, fetchAll, GP_OFFSET_MS, json, REWARD_TYPES, VISIT_TYPES } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isEssentiel, planRefused } from "@/lib/walty-plan";
+import { getMerchantRole } from "@/lib/merchant-role";
 
 /** Début (heure de Guadeloupe) du mois, `back` mois en arrière. */
 function monthStart(back: number) {
@@ -17,6 +18,10 @@ function monthStart(back: number) {
 export async function GET() {
   const session = await getMerchantSession();
   if (!session) return expired();
+  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
+  if (!(await getMerchantRole())?.manager) {
+    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
+  }
   if (await isEssentiel(session.businessId)) return planRefused();
   const supabase = createAdminClient();
   const biz = session.businessId;
