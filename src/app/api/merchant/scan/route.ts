@@ -48,9 +48,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  * soldes suffisants, carte du bon commerce…) sont vérifiées dans la base de données.
  */
 export async function POST(request: Request) {
-  const session = await getMerchantSession();
-  if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retape ton code PIN." }, { status: 401 });
-
   const body = (await request.json().catch(() => ({}))) as {
     serial?: string;
     action?: Action;
@@ -60,11 +57,20 @@ export async function POST(request: Request) {
     lap_ms?: number;
   };
   const serial = (body.serial ?? "").trim().toLowerCase();
+  // La session et la carte sont lues EN MÊME TEMPS (une attente réseau de moins) ; sans session valable,
+  // rien de la carte n'est renvoyé (401 d'abord).
+  const [session, loaded] = await Promise.all([
+    getMerchantSession(),
+    UUID.test(serial)
+      ? loadCardBundle("serial_number", serial).catch((err: Error) => (console.error("[scan load]", err.message), "error" as const))
+      : Promise.resolve(null),
+  ]);
+  if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retape ton code PIN." }, { status: 401 });
   if (!UUID.test(serial)) {
     return NextResponse.json({ ok: false, error: "Ce QR code n'est pas une carte de fidélité." }, { status: 400 });
   }
-
-  const before = await loadCardBundle("serial_number", serial);
+  if (loaded === "error") return NextResponse.json({ ok: false, error: "Erreur serveur, réessaie." }, { status: 500 });
+  const before = loaded;
   if (!before) return NextResponse.json({ ok: false, error: "Carte inconnue." }, { status: 404 });
   if (before.program.business_id !== session.businessId) {
     return NextResponse.json({ ok: false, error: "Cette carte appartient à un autre commerce." }, { status: 403 });

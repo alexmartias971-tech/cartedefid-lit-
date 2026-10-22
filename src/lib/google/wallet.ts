@@ -4,6 +4,7 @@ import { JWT } from "google-auth-library";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, googleFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
+import { hashOf, inBackground, storageGet, storagePut } from "@/lib/wallet-cache";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
 
@@ -34,6 +35,7 @@ async function call<T>(
   method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
+  allowed: number[] = [404],
 ): Promise<{ status: number; data: T | null }> {
   const res = await client().request<T>({
     url: `${API}${path}`,
@@ -41,10 +43,10 @@ async function call<T>(
     data: body,
     validateStatus: () => true, // on gère nous-mêmes les erreurs
   });
-  if (res.status >= 400 && res.status !== 404) {
+  if (res.status >= 400 && !allowed.includes(res.status)) {
     throw new Error(`Google Wallet ${method} ${path} → ${res.status} ${JSON.stringify(res.data)}`);
   }
-  return { status: res.status, data: res.status === 404 ? null : res.data };
+  return { status: res.status, data: res.status >= 400 ? null : res.data };
 }
 
 const issuerId = () => requireEnv("GOOGLE_WALLET_ISSUER_ID");
@@ -200,6 +202,52 @@ export async function upsertGoogleObject(bundle: CardBundle) {
   const existing = await call("GET", `/loyaltyObject/${body.id}`);
   if (existing.status === 404) await call("POST", "/loyaltyObject", body);
   else await call("PUT", `/loyaltyObject/${body.id}`, body);
+}
+
+/**
+ * Bouton « Ajouter à Google Wallet », en version rapide :
+ *  - on ne renvoie le modèle (classe) et la carte (objet) à Google que s'ils ont changé depuis le dernier clic
+ *    (un repère, l'empreinte de ce qu'on a envoyé, est gardé dans le cache « pass-cache ») ;
+ *  - carte nouvelle : on la crée directement (1 appel au lieu de 2), « existe déjà » → mise à jour.
+ * Avant : 4 appels à Google à chaque clic (lire + écrire, deux fois). Après : 1 appel (nouvelle carte), 0 si rien n'a changé.
+ */
+export async function prepareGoogleSave(bundle: CardBundle): Promise<{ classSent: boolean; objectSent: boolean }> {
+  const { program, business, card } = bundle;
+  const cBody = classBody(program, business);
+  const oBody = objectBody(bundle);
+  const cHash = hashOf(cBody);
+  const oHash = hashOf(oBody);
+  const cMark = `google/class/${program.id}.txt`;
+  const oMark = `google/object/${card.serial_number}.txt`;
+  const [cSeen, oSeen] = await Promise.all([storageGet(cMark), storageGet(oMark)]);
+  const classSent = cSeen?.toString() !== cHash;
+  const objectSent = oSeen?.toString() !== oHash;
+
+  // Le modèle doit exister avant la carte : d'abord le modèle (en général déjà là : 0 appel)
+  if (classSent) {
+    const put = await call("PUT", `/loyaltyClass/${cBody.id}`, cBody);
+    if (put.status === 404) await call("POST", "/loyaltyClass", cBody);
+  }
+  if (objectSent) {
+    if (card.google_saved) {
+      // Carte déjà chez Google : mise à jour directe (création si elle a disparu)
+      const put = await call("PUT", `/loyaltyObject/${oBody.id}`, oBody);
+      if (put.status === 404) await call("POST", "/loyaltyObject", oBody);
+    } else {
+      const created = await call("POST", "/loyaltyObject", oBody, [409]);
+      if (created.status === 409) await call("PUT", `/loyaltyObject/${oBody.id}`, oBody);
+    }
+  }
+  // Les repères sont notés après la réponse (le client n'attend pas)
+  if (classSent || objectSent) {
+    await inBackground(async () => {
+      await Promise.all([
+        classSent ? storagePut(cMark, Buffer.from(cHash), "text/plain") : null,
+        objectSent ? storagePut(oMark, Buffer.from(oHash), "text/plain") : null,
+      ]);
+    });
+  }
+  return { classSent, objectSent };
 }
 
 /** Ajoute un message avec notification sur la carte Google (limite Google : ~3 par jour). */

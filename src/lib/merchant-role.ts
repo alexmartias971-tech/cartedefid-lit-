@@ -2,7 +2,8 @@ import "server-only";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import { requireEnv } from "@/lib/env";
-import { getMerchantSession, type MerchantSession } from "@/lib/merchant-session";
+import { getMerchantSession, readSessionCookie, type MerchantSession } from "@/lib/merchant-session";
+import { perRequest } from "@/lib/request-memo";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -66,27 +67,37 @@ export type MerchantRole = {
   manager: boolean;
 };
 
-/** La session (comme getMerchantSession) et le rôle prouvé. null si pas de session. */
+/**
+ * La session (comme getMerchantSession) et le rôle prouvé. null si pas de session.
+ * Rapide : la signature du cookie « gérant » est vérifiée sans base de données, puis l'accès (scanner_access) et
+ * le compte gérant (merchant_logins) sont lus EN MÊME TEMPS ; une seule fois par demande (voir request-memo.ts).
+ */
 export async function getMerchantRole(): Promise<MerchantRole | null> {
-  const session = await getMerchantSession();
-  if (!session) return null;
   const store = await cookies();
   const sessionValue = store.get(SESSION_COOKIE)?.value ?? "";
   const raw = store.get(ROLE_COOKIE)?.value ?? "";
-  const employee: MerchantRole = { session, password: false, mustChange: false, manager: false };
+  return perRequest(store, `role:${sessionValue}|${raw}`, async () => {
+    // Preuve « gérant » valable pour CE badge ? (calcul local, sans base de données)
+    const parts = raw.split(".");
+    const loginId = parts.length === 3 && parts[0] === "v1" && UUID.test(parts[1]) && sessionValue ? parts[1] : "";
+    const signed = !!loginId && safeEqual(parts[2], roleSignature(loginId, sessionValue));
+    const scannerId = readSessionCookie(sessionValue)?.scannerId ?? "";
 
-  const parts = raw.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1" || !UUID.test(parts[1]) || !sessionValue) return employee;
-  const [, loginId, signature] = parts;
-  if (!safeEqual(signature, roleSignature(loginId, sessionValue))) return employee;
-
-  const { data } = await createAdminClient()
-    .from("merchant_logins")
-    .select("id, must_change_password")
-    .eq("id", loginId)
-    .eq("scanner_access_id", session.scannerId)
-    .maybeSingle();
-  if (!data) return employee;
-  const mustChange = !!data.must_change_password;
-  return { session, password: true, mustChange, manager: !mustChange };
+    const [session, account] = await Promise.all([
+      getMerchantSession(),
+      signed && UUID.test(scannerId)
+        ? createAdminClient()
+            .from("merchant_logins")
+            .select("id, must_change_password")
+            .eq("id", loginId)
+            .eq("scanner_access_id", scannerId)
+            .maybeSingle()
+            .then((r) => r.data as { id: string; must_change_password: boolean } | null)
+        : Promise.resolve(null),
+    ]);
+    if (!session) return null;
+    if (!account || session.scannerId !== scannerId) return { session, password: false, mustChange: false, manager: false };
+    const mustChange = !!account.must_change_password;
+    return { session, password: true, mustChange, manager: !mustChange };
+  });
 }

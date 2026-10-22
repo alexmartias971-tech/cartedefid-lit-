@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { loadCardBundlesByIds } from "@/lib/cards";
 import { isGoogleConfigured } from "@/lib/env";
 import { upsertGoogleClass } from "@/lib/google/wallet";
+import { getMerchantRole, type MerchantRole } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, Program } from "@/lib/types";
 import { syncCards } from "@/lib/wallet-sync";
@@ -21,6 +22,22 @@ export const GP_OFFSET_MS = 4 * 3600 * 1000;
 
 export const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
 export const expired = () => json({ ok: false, error: "Session expirée : retapez votre code PIN." }, 401);
+
+export const MANAGER_ONLY_MESSAGE = "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe.";
+/** 403 « réservé au gérant » (même forme que l'ancienne réponse de la passerelle walty.fr). */
+export const forbidden = (error = MANAGER_ONLY_MESSAGE) => json({ ok: false, forbidden: true, error }, 403);
+
+/**
+ * Rubriques du gérant : le logiciel de cartes vérifie LUI-MÊME le rôle (la passerelle walty.fr ne le redemande plus).
+ * Renvoie le rôle si c'est le gérant (connexion par mot de passe, mot de passe provisoire changé),
+ * sinon la réponse à renvoyer telle quelle (401 session expirée, 403 employé).
+ */
+export async function requireManager(): Promise<{ role: MerchantRole; res: null } | { role: null; res: NextResponse }> {
+  const role = await getMerchantRole();
+  if (!role) return { role: null, res: json({ ok: false, error: "Session expirée : reconnectez-vous." }, 401) };
+  if (!role.manager) return { role: null, res: forbidden() };
+  return { role, res: null };
+}
 
 /** "2026-10-15" : le jour en heure de Guadeloupe. */
 export const gpDay = (t: number) => new Date(t - GP_OFFSET_MS).toISOString().slice(0, 10);
@@ -44,7 +61,10 @@ const LABELS: Record<string, string> = {
   cashback_used: "Cagnotte utilisée",
   coupon_used: "Offre utilisée",
   correction: "Bonus",
+  stamp_removed: "Tampon retiré",
 };
+/** Corrections du gérant : « Retirer un tampon » (raison obligatoire, dans note). */
+export const REMOVED_TYPES = ["stamp_removed"] as const;
 
 const euro = (n: number) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
 
@@ -80,6 +100,7 @@ export function mapEvent(e: EventRow, undoable = false) {
   else if (t === "coupon_used") detail = e.note ?? "";
   else if (t === "reward_redeemed") detail = "Le compteur repart à zéro";
   else if (t === "correction") detail = e.note === "Bonus parrainage" ? "Bonus parrainage" : e.note ?? (e.delta ? `${e.delta > 0 ? "+" : ""}${e.delta}` : "");
+  else if (t === "stamp_removed") detail = `−${Math.abs(e.delta || 1)} tampon${Math.abs(e.delta || 1) > 1 ? "s" : ""}${e.note ? ` · Raison : ${e.note}` : ""}`;
   const customer = e.cards?.customers;
   return {
     id: e.id,

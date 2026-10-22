@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMerchantSession } from "@/lib/merchant-session";
+import { getMerchantRole } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -26,8 +26,14 @@ function crossSite(request: Request) {
 
 export async function POST(request: Request) {
   if (crossSite(request)) return fail("Demande refusée.", 403);
-  const session = await getMerchantSession();
-  if (!session) return fail("Session expirée : reconnectez-vous.", 401);
+  const role = await getMerchantRole();
+  if (!role) return fail("Session expirée : reconnectez-vous.", 401);
+  // Seulement depuis une connexion par e-mail/identifiant + mot de passe (même provisoire), jamais depuis un code PIN :
+  // vérifié ici (la passerelle walty.fr ne le redemande plus).
+  if (!role.password) {
+    return fail("Le mot de passe se change depuis une connexion par e-mail et mot de passe.", 403, { forbidden: true });
+  }
+  const session = role.session;
 
   const raw = await request.text().catch(() => "");
   if (raw.length > 2000) return fail("Demande trop longue.", 413);

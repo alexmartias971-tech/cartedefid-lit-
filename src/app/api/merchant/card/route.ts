@@ -2,12 +2,10 @@ import QRCode from "qrcode";
 import sharp from "sharp";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels } from "@/lib/card-state";
 import { appUrl } from "@/lib/env";
-import { getMerchantSession } from "@/lib/merchant-session";
-import { expired, json, pitchVous } from "@/lib/merchant-space";
+import { json, pitchVous, requireManager } from "@/lib/merchant-space";
 import { renderStripFor } from "@/lib/strip";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
-import { getMerchantRole } from "@/lib/merchant-role";
 
 export const maxDuration = 30;
 
@@ -30,12 +28,10 @@ async function logoData(url: string | null): Promise<string | null> {
  * Seulement pour le commerce de la session ; aucune donnée client.
  */
 export async function GET() {
-  const session = await getMerchantSession();
-  if (!session) return expired();
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
+  // réservé au gérant (connexion e-mail + mot de passe), vérifié ici (plus par la passerelle walty.fr)
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
   const supabase = createAdminClient();
 
   const [{ data: biz }, { data: programData }] = await Promise.all([
@@ -45,6 +41,16 @@ export async function GET() {
   if (!biz) return json({ ok: false, error: "Commerce introuvable." }, 404);
   const business = biz as Business;
   const signupUrl = `${appUrl()}/c/${business.slug}`;
+
+  // Les compteurs « cartes dans les téléphones » partent tout de suite, en même temps que le QR code et l'image
+  const programId = (programData as { id?: string } | null)?.id ?? null;
+  const count = (platform: string | null) => {
+    const q = supabase.from("cards").select("id", { count: "exact", head: true }).eq("program_id", programId!);
+    return Promise.resolve(platform ? q.eq("wallet_platform", platform) : q.is("wallet_platform", null)).then((r) => r.count ?? 0);
+  };
+  const walletsP = programId
+    ? Promise.all([count("apple"), count("google"), count("web"), count(null)]).then(([apple, google, web, none]) => ({ apple, google, web, none }))
+    : Promise.resolve({ apple: 0, google: 0, web: 0, none: 0 });
 
   const [qrPng, logo] = await Promise.all([
     QRCode.toDataURL(signupUrl, { width: 1024, margin: 2, errorCorrectionLevel: "M" }),
@@ -104,13 +110,8 @@ export async function GET() {
       welcome: program.welcome_offer,
     };
     rules = describeProgram(program, sortedTiers);
-    const count = (platform: string | null) => {
-      const q = supabase.from("cards").select("id", { count: "exact", head: true }).eq("program_id", program.id);
-      return Promise.resolve(platform ? q.eq("wallet_platform", platform) : q.is("wallet_platform", null)).then((r) => r.count ?? 0);
-    };
-    const [apple, google, web, none] = await Promise.all([count("apple"), count("google"), count("web"), count(null)]);
-    wallets = { apple, google, web, none };
   }
+  wallets = await walletsP;
 
   return json({
     ok: true,

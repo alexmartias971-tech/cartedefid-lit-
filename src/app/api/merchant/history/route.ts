@@ -1,12 +1,12 @@
 import { after } from "next/server";
-import { getMerchantSession } from "@/lib/merchant-session";
 import {
   EVENT_SELECT,
-  expired,
   gpDay,
   gpDayBounds,
   json,
   mapEvent,
+  REMOVED_TYPES,
+  requireManager,
   REWARD_TYPES,
   undoableIds,
   UUID,
@@ -15,13 +15,13 @@ import {
 } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCard } from "@/lib/wallet-sync";
-import { getMerchantRole } from "@/lib/merchant-role";
 
 const FILTERS: Record<string, readonly string[] | null> = {
   all: null,
   visits: VISIT_TYPES,
   rewards: REWARD_TYPES,
-  bonus: ["correction"],
+  // bonus (parrainage, série) et tampons retirés par le gérant
+  bonus: ["correction", ...REMOVED_TYPES],
 };
 
 /**
@@ -29,14 +29,12 @@ const FILTERS: Record<string, readonly string[] | null> = {
  * ?day=AAAA-MM-JJ (aujourd'hui par défaut) · ?type=all|visits|rewards|bonus|undone · ?limit=…
  * Renvoie aussi le résumé de la journée (passages, récompenses, nouveaux clients, achats)
  * et, pour chaque ligne, si cet accès peut encore l'annuler (10 minutes, comme au scanner).
+ * RÉSERVÉ AU GÉRANT, vérifié ici (la passerelle walty.fr ne le redemande plus : une attente réseau de moins).
  */
 export async function GET(request: Request) {
-  const session = await getMerchantSession();
-  if (!session) return expired();
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
   const params = new URL(request.url).searchParams;
   const today = gpDay(Date.now());
   const day = params.get("day") || today;
@@ -95,10 +93,14 @@ export async function GET(request: Request) {
   });
 }
 
-/** Annuler un passage depuis l'historique : mêmes règles qu'au scanner (le dernier de la carte, par cet accès, 10 minutes). */
+/**
+ * Annuler un passage depuis l'historique : mêmes règles qu'au scanner (le dernier de la carte, par cet accès, 10 minutes).
+ * Gérant seulement (comme la lecture de l'historique) ; un employé annule au scanner, juste après le passage.
+ */
 export async function POST(request: Request) {
-  const session = await getMerchantSession();
-  if (!session) return expired();
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
   if (!(request.headers.get("content-type") ?? "").includes("application/json")) {
     return json({ ok: false, error: "Demande invalide." }, 415);
   }
@@ -124,25 +126,28 @@ export async function POST(request: Request) {
     return json({ ok: false, error: "Trop tard : un passage s'annule dans les 10 minutes. Contactez Walty si besoin." }, 409);
   }
   // La base annule le DERNIER tampon / achat de cette carte fait par cet accès : on vérifie que c'est bien celui-ci
-  const { data: last } = await supabase
-    .from("stamp_events")
-    .select("id")
-    .eq("card_id", ev.card_id)
-    .eq("scanner_id", session.scannerId)
-    .in("event_type", [...VISIT_TYPES])
-    .is("undone_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // (lu en même temps que la carte : une attente réseau de moins)
+  const [{ data: last }, { data: card }] = await Promise.all([
+    supabase
+      .from("stamp_events")
+      .select("id")
+      .eq("card_id", ev.card_id)
+      .eq("scanner_id", session.scannerId)
+      .in("event_type", [...VISIT_TYPES])
+      .is("undone_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("cards")
+      .select("id, serial_number, loyalty_programs!inner(business_id)")
+      .eq("id", ev.card_id)
+      .eq("loyalty_programs.business_id", session.businessId)
+      .maybeSingle(),
+  ]);
   if (!last || last.id !== ev.id) {
     return json({ ok: false, error: "Annulez d'abord le passage plus récent de ce client." }, 409);
   }
-  const { data: card } = await supabase
-    .from("cards")
-    .select("id, serial_number, loyalty_programs!inner(business_id)")
-    .eq("id", ev.card_id)
-    .eq("loyalty_programs.business_id", session.businessId)
-    .maybeSingle();
   if (!card) return json({ ok: false, error: "Carte introuvable." }, 404);
 
   const { data, error } = await supabase.rpc("undo_last_action", { p_serial: card.serial_number, p_scanner_id: session.scannerId });

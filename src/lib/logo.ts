@@ -3,6 +3,8 @@ import sharp from "sharp";
 import { FONT_DATA } from "@/lib/fonts";
 import { shapeText } from "@/lib/text-shape";
 import type { Business, Program } from "@/lib/types";
+// Icône et logos de la carte Apple : palette au maximum de qualité (rendu identique, fichiers 2 à 3 fois plus légers)
+import { LOGO_PNG } from "@/lib/wallet-image-settings";
 
 /**
  * Retire les marges transparentes autour d'un logo (il paraît plus grand et plus lisible).
@@ -39,9 +41,7 @@ async function trimTransparent(raw: Buffer): Promise<Buffer> {
   }
 }
 
-/** Télécharge le logo de l'entreprise (s'il existe), sans les marges transparentes autour. */
-async function fetchLogo(url: string | null): Promise<Buffer | null> {
-  if (!url) return null;
+async function downloadLogo(url: string): Promise<Buffer | null> {
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return null;
@@ -49,6 +49,26 @@ async function fetchLogo(url: string | null): Promise<Buffer | null> {
   } catch {
     return null;
   }
+}
+
+const logoCache = new Map<string, { at: number; buf: Promise<Buffer | null> }>();
+
+/**
+ * Télécharge le logo de l'entreprise (s'il existe), sans les marges transparentes autour.
+ * Gardé 10 minutes en mémoire : une carte Apple utilise le logo 8 fois (icône, logo, logo iOS 27…),
+ * il n'est téléchargé et détouré qu'une seule fois.
+ */
+function fetchLogo(url: string | null): Promise<Buffer | null> {
+  if (!url) return Promise.resolve(null);
+  const hit = logoCache.get(url);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.buf;
+  const buf = downloadLogo(url);
+  logoCache.set(url, { at: Date.now(), buf });
+  void buf.then((b) => {
+    if (!b && logoCache.get(url)?.buf === buf) logoCache.delete(url);
+  });
+  while (logoCache.size > 32) logoCache.delete(logoCache.keys().next().value as string);
+  return buf;
 }
 
 function escapeXml(text: string) {
@@ -67,7 +87,7 @@ async function letterIcon(business: Business, program: Program | null, size: num
     <rect width="100%" height="100%" rx="${size * 0.22}" fill="${bg}"/>
     <text x="50%" y="50%" dy=".35em" text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
       font-weight="700" font-size="${size * 0.55}" fill="${fg}">${letter}</text></svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return sharp(Buffer.from(svg)).png(LOGO_PNG).toBuffer();
 }
 
 /** Icône carrée (Apple : icon.png 29px / 58px / 87px ; Google : logo du programme). */
@@ -77,7 +97,7 @@ export async function squareLogoPng(business: Business, program: Program | null,
     try {
       return await sharp(source)
         .resize(size, size, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
-        .png()
+        .png(LOGO_PNG)
         .toBuffer();
     } catch {
       // Logo illisible : on utilise l'icône de secours
@@ -93,7 +113,7 @@ export async function wideLogoPng(business: Business, program: Program | null, s
     try {
       return await sharp(source)
         .resize(160 * scale, 50 * scale, { fit: "inside", withoutEnlargement: false })
-        .png()
+        .png(LOGO_PNG)
         .toBuffer();
     } catch {
       // on continue avec l'icône de secours
@@ -109,7 +129,7 @@ export async function primaryLogoPng(business: Business, scale: 1 | 2 | 3): Prom
   try {
     return await sharp(source)
       .resize(126 * scale, 30 * scale, { fit: "inside", withoutEnlargement: false })
-      .png()
+      .png(LOGO_PNG)
       .toBuffer();
   } catch {
     return null;
@@ -140,7 +160,7 @@ async function nameImage(business: Business, program: Program | null, maxW: numb
   const W = Math.max(1, Math.min(maxW, Math.round((H * vbW) / vbH)));
   const fg = program?.foreground_color ?? "#FFFFFF";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${-s.cap * 0.05} ${-top} ${vbW} ${vbH}" preserveAspectRatio="xMinYMid meet"><path d="${s.d}" fill="${fg}" transform="scale(1 -1)"/></svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return sharp(Buffer.from(svg)).png(LOGO_PNG).toBuffer();
 }
 
 /** Haut de la carte iPhone iOS 27 sans logo : le nom du commerce en image (30 pt de haut, 126 pt de large au maximum). */

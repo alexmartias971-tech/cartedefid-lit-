@@ -1,6 +1,7 @@
 import "server-only";
 import sharp from "sharp";
 import { FORMATS, type BannerFormat, type LogoArt } from "@/lib/visual";
+import { PHOTO_PNG } from "@/lib/wallet-image-settings";
 import {
   cardBannerSvg,
   cardPosterSvg,
@@ -20,40 +21,50 @@ import type { CardBundle, Program, Tier } from "@/lib/types";
  */
 
 type Embedded = { uri: string; ratio: number } | null;
-const cache = new Map<string, { at: number; img: Embedded }>();
+const cache = new Map<string, { at: number; img: Promise<Embedded> }>();
 
-/**
- * Télécharge une image et la renvoie en data: (avec son format largeur / hauteur).
- * L'image n'est pas recadrée : le dessin part exactement de la même image que l'aperçu de l'éditeur.
- */
-async function embed(url: string | null, maxWidth = 1400): Promise<Embedded> {
-  if (!url) return null;
-  const key = `${url}|${maxWidth}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.img;
-  let img: Embedded = null;
+async function loadEmbedded(url: string, maxWidth: number): Promise<Embedded> {
   try {
     const input = url.startsWith("data:")
       ? Buffer.from(url.slice(url.indexOf(",") + 1), "base64")
       : await fetch(url, { cache: "no-store" }).then(async (res) => (res.ok ? Buffer.from(await res.arrayBuffer()) : null));
-    if (input) {
-      const meta = await sharp(input).metadata();
-      const resized = sharp(input).rotate().resize({ width: maxWidth, withoutEnlargement: true });
-      // JPEG pour les photos (léger et rapide), PNG si l'image a de la transparence (logos)
-      const buf = meta.hasAlpha ? await resized.png().toBuffer() : await resized.jpeg({ quality: 88 }).toBuffer();
-      const { width = 1, height = 1 } = await sharp(buf).metadata();
-      img = { uri: `data:image/${meta.hasAlpha ? "png" : "jpeg"};base64,${buf.toString("base64")}`, ratio: width / Math.max(1, height) };
-    }
+    if (!input) return null;
+    const meta = await sharp(input).metadata();
+    const resized = sharp(input).rotate().resize({ width: maxWidth, withoutEnlargement: true });
+    // JPEG pour les photos (léger et rapide), PNG si l'image a de la transparence (logos)
+    const { data: buf, info } = meta.hasAlpha
+      ? await resized.png().toBuffer({ resolveWithObject: true })
+      : await resized.jpeg({ quality: 88 }).toBuffer({ resolveWithObject: true });
+    return { uri: `data:image/${meta.hasAlpha ? "png" : "jpeg"};base64,${buf.toString("base64")}`, ratio: info.width / Math.max(1, info.height) };
   } catch {
-    img = null;
+    return null;
   }
+}
+
+/**
+ * Télécharge une image et la renvoie en data: (avec son format largeur / hauteur).
+ * L'image n'est pas recadrée : le dessin part exactement de la même image que l'aperçu de l'éditeur.
+ * Les demandes simultanées pour la même photo partagent UN seul téléchargement (avant : 1 par taille d'image).
+ */
+function embed(url: string | null, maxWidth = 1400): Promise<Embedded> {
+  if (!url) return Promise.resolve(null);
+  const key = `${url}|${maxWidth}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.img;
+  const img = loadEmbedded(url, maxWidth);
   cache.set(key, { at: Date.now(), img });
+  // Un échec (réseau) n'est pas gardé : on réessaiera à la prochaine demande
+  void img.then((v) => {
+    if (!v && cache.get(key)?.img === img) cache.delete(key);
+  });
+  // Mémoire bornée : on oublie les plus anciennes photos
+  while (cache.size > 48) cache.delete(cache.keys().next().value as string);
   return img;
 }
 
 async function svgToPng(svg: string, width: number, height: number): Promise<Buffer> {
-  // Palette optimisée : images 3 à 4 fois plus légères (le fichier .pkpass reste rapide à télécharger)
-  return sharp(Buffer.from(svg)).resize(width, height).png({ palette: true, quality: 92, effort: 8, compressionLevel: 9 }).toBuffer();
+  // Palette optimisée (réglage dans wallet-image-settings.ts) : images 3 à 4 fois plus légères
+  return sharp(Buffer.from(svg)).resize(width, height).png(PHOTO_PNG).toBuffer();
 }
 
 /** Le logo n'est utile au dessin que s'il est posé sur le visuel ou utilisé comme tampon. */

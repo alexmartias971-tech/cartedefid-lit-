@@ -1,8 +1,11 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { normalizePhone, phoneVariants } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { warmCard } from "@/lib/wallet-warm";
 
 export type SignupState = { error?: string };
 const POLICY_VERSION = "v2"; // v2 (4 oct. 2026) : textes des cases et page confidentialité complétée
@@ -166,5 +169,10 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     });
   }
 
+  // La carte Wallet est préparée pendant que le client découvre sa page : son clic « Ajouter » sera instantané
+  const newCardId = card.id;
+  const ua = (await headers()).get("user-agent") ?? "";
+  const wallet = { apple: !/Android/i.test(ua), google: !/iPhone|iPad|iPod/i.test(ua) };
+  after(() => warmCard(newCardId, wallet));
   redirect(`/carte/${card.web_token}`);
 }

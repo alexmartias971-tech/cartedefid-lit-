@@ -1,8 +1,8 @@
 import { after } from "next/server";
 import { describeProgram } from "@/lib/card-state";
-import { getMerchantSession, type MerchantSession } from "@/lib/merchant-session";
+import { type MerchantSession } from "@/lib/merchant-session";
 import { getMerchantRole } from "@/lib/merchant-role";
-import { expired, json, resyncProgramCards, UUID } from "@/lib/merchant-space";
+import { expired, json, requireManager, resyncProgramCards, UUID } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
 import { getWaltyPlan, planRefused, type PlanId } from "@/lib/walty-plan";
@@ -40,13 +40,29 @@ async function load(businessId: string): Promise<Loaded | null> {
   };
 }
 
-function view(d: Loaded, session: MerchantSession, plan: PlanId) {
+/**
+ * Les cartes déjà installées et leurs tampons (mode tampons) : pour prévenir le gérant AVANT d'enregistrer
+ * un nouveau nombre de tampons (« M clients ont déjà 8 tampons ou plus… »). Totaux seulement, aucune donnée client.
+ */
+type CardsInfo = { cards: number; installed: number; by_stamps: Record<string, number> };
+async function cardsInfo(businessId: string): Promise<CardsInfo | null> {
+  const { data, error } = await createAdminClient().rpc("merchant_program_stamps", { p_business: businessId });
+  if (error) {
+    console.error("[espace program stamps]", error.message);
+    return null;
+  }
+  return data as CardsInfo;
+}
+
+function view(d: Loaded, session: MerchantSession, plan: PlanId, cards: CardsInfo | null = null) {
   const p = d.program;
   return {
     ok: true,
     canEdit: session.canSendNotifications,
     plan,
     updated_at: p.updated_at,
+    // nombre de cartes et répartition des tampons (null si indisponible : l'écran n'affiche alors pas le détail)
+    cards: cards ? { total: Number(cards.cards) || 0, installed: Number(cards.installed) || 0, byStamps: cards.by_stamps ?? {} } : null,
     settings: {
       reward_description: p.reward_description,
       reward_threshold: p.reward_threshold,
@@ -88,15 +104,14 @@ function view(d: Loaded, session: MerchantSession, plan: PlanId) {
 }
 
 export async function GET() {
-  const session = await getMerchantSession();
-  if (!session) return expired();
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
-  const d = await load(session.businessId);
+  // réservé au gérant (connexion e-mail + mot de passe), vérifié ici (plus par la passerelle walty.fr)
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
+  // programme, formule et cartes installées lus en même temps (une seule attente réseau)
+  const [d, plan, cards] = await Promise.all([load(session.businessId), getWaltyPlan(session.businessId), cardsInfo(session.businessId)]);
   if (!d) return json({ ok: false, error: "Carte introuvable. Contactez Walty." }, 404);
-  return json(view(d, session, (await getWaltyPlan(session.businessId)).plan));
+  return json(view(d, session, plan.plan, cards));
 }
 
 type Body = {
@@ -123,14 +138,15 @@ function safeUrl(v: unknown): string | null | false {
 }
 
 export async function POST(request: Request) {
-  const session = await getMerchantSession();
-  if (!session) return expired();
+  const role = await getMerchantRole();
+  if (!role) return expired();
+  const session = role.session;
   if (!session.canSendNotifications) {
     return json({ ok: false, error: "Les réglages se modifient avec l'accès du gérant. Demandez à Walty." }, 403);
   }
   // gérant prouvé (connexion par mot de passe) : un employé qui connaît le PIN ne peut pas changer le programme
-  if (!(await getMerchantRole())?.manager) {
-    return json({ ok: false, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour modifier les réglages." }, 403);
+  if (!role.manager) {
+    return json({ ok: false, forbidden: true, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour modifier les réglages." }, 403);
   }
   if (!(request.headers.get("content-type") ?? "").includes("application/json")) {
     return json({ ok: false, error: "Demande invalide." }, 415);
@@ -138,10 +154,10 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as Body | null;
   if (!body || typeof body !== "object") return json({ ok: false, error: "Demande invalide." }, 400);
 
-  const d = await load(session.businessId);
+  // programme et formule lus en même temps
+  const [d, { plan }] = await Promise.all([load(session.businessId), getWaltyPlan(session.businessId)]);
   if (!d) return json({ ok: false, error: "Carte introuvable. Contactez Walty." }, 404);
   const { program: p, business: b } = d;
-  const { plan } = await getWaltyPlan(session.businessId);
   if (body.updated_at && body.updated_at !== p.updated_at) {
     return json({ ok: false, conflict: true, error: "Les réglages viennent d'être modifiés ailleurs (par Walty ?). Rechargez puis recommencez." }, 409);
   }
@@ -244,23 +260,20 @@ export async function POST(request: Request) {
   }
 
   const supabase = createAdminClient();
-  const { data: updated, error } = await supabase
-    .from("loyalty_programs")
-    .update(programFields)
-    .eq("id", p.id)
-    .eq("business_id", session.businessId)
-    .select("*")
-    .single();
+  // programme et coordonnées enregistrés en même temps
+  const [{ data: updated, error }, bRes] = await Promise.all([
+    supabase.from("loyalty_programs").update(programFields).eq("id", p.id).eq("business_id", session.businessId).select("id").single(),
+    Object.keys(businessFields).length > 0
+      ? supabase.from("businesses").update(businessFields).eq("id", session.businessId)
+      : Promise.resolve({ error: null }),
+  ]);
   if (error || !updated) {
     console.error("[espace program]", error?.message);
     return json({ ok: false, error: "Enregistrement impossible. Réessayez." }, 500);
   }
-  if (Object.keys(businessFields).length > 0) {
-    const { error: bErr } = await supabase.from("businesses").update(businessFields).eq("id", session.businessId);
-    if (bErr) {
-      console.error("[espace business]", bErr.message);
-      return json({ ok: false, error: "Vos coordonnées n'ont pas pu être enregistrées. Réessayez." }, 500);
-    }
+  if (bRes.error) {
+    console.error("[espace business]", bRes.error.message);
+    return json({ ok: false, error: "Vos coordonnées n'ont pas pu être enregistrées. Réessayez." }, 500);
   }
   if (catalogChanges) {
     let sort = d.catalog.length;
@@ -276,9 +289,18 @@ export async function POST(request: Request) {
   }
   console.info("[espace program] modifié par l'accès", session.scannerId, "commerce", session.businessId);
 
-  const fresh = await load(session.businessId);
+  const [fresh, cards] = await Promise.all([load(session.businessId), cardsInfo(session.businessId)]);
   if (!fresh) return json({ ok: false, error: "Carte introuvable." }, 404);
-  // Les cartes déjà dans les téléphones se mettent à jour en arrière-plan
+  // Les cartes déjà dans les téléphones se mettent à jour en arrière-plan (TOUTES les cartes du programme) :
+  // classe Google mise à jour, date de mise à jour des cartes changée, iPhone prévenus (APNs, ils rechargent la carte),
+  // objets Google Wallet réécrits (voir resyncProgramCards dans src/lib/merchant-space.ts).
   after(() => resyncProgramCards(fresh.program, fresh.business));
-  return json({ ...view(fresh, session, plan), done: "Enregistré ✓ Les cartes de vos clients se mettent à jour dans quelques instants." });
+  const n = cards ? Number(cards.cards) || 0 : null;
+  return json({
+    ...view(fresh, session, plan, cards),
+    done:
+      n === 0
+        ? "Enregistré ✓"
+        : `Enregistré ✓ ${n != null ? `Les ${n} carte${n > 1 ? "s" : ""} de vos clients se mettent` : "Les cartes de vos clients se mettent"} à jour dans quelques instants.`,
+  });
 }

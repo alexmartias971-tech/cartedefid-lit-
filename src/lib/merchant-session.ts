@@ -2,6 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import { requireEnv } from "@/lib/env";
+import { perRequest } from "@/lib/request-memo";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const COOKIE = "commercant_session";
@@ -39,14 +40,11 @@ export type MerchantSession = {
 };
 
 /**
- * Vérifie le badge du commerçant ET que son accès est toujours actif
- * (si tu désactives un accès dans ton tableau de bord, il est déconnecté aussitôt).
+ * Lit le badge SANS base de données : signature et date d'expiration.
+ * Renvoie l'identifiant de l'accès si le badge est authentique et pas expiré, sinon null.
  */
-export async function getMerchantSession(): Promise<MerchantSession | null> {
-  const store = await cookies();
-  const raw = store.get(COOKIE)?.value;
+export function readSessionCookie(raw: string | undefined | null): { scannerId: string } | null {
   if (!raw) return null;
-
   const parts = raw.split(".");
   if (parts.length !== 3) return null;
   const [scannerId, expires, signature] = parts;
@@ -54,17 +52,19 @@ export async function getMerchantSession(): Promise<MerchantSession | null> {
   if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
     return null;
   }
-  if (Number(expires) < Date.now()) return null;
+  if (!(Number(expires) >= Date.now())) return null;
+  return { scannerId };
+}
 
-  const supabase = createAdminClient();
-  const { data } = await supabase
+/** L'accès est-il toujours actif (et son commerce actif) ? Une seule lecture, colonnes utiles seulement. */
+async function loadSession(scannerId: string): Promise<MerchantSession | null> {
+  const { data } = await createAdminClient()
     .from("scanner_access")
     .select("id, business_id, access_token, is_active, can_send_notifications, label, businesses(status)")
     .eq("id", scannerId)
     .maybeSingle();
   const business = data?.businesses as unknown as { status: string } | null;
   if (!data || !data.is_active || business?.status !== "active") return null;
-
   return {
     scannerId: data.id,
     businessId: data.business_id,
@@ -72,4 +72,17 @@ export async function getMerchantSession(): Promise<MerchantSession | null> {
     canSendNotifications: data.can_send_notifications,
     label: data.label,
   };
+}
+
+/**
+ * Vérifie le badge du commerçant ET que son accès est toujours actif
+ * (si tu désactives un accès dans ton tableau de bord, il est déconnecté aussitôt).
+ * Une seule lecture de la base par demande, même si la fonction est appelée plusieurs fois (voir request-memo.ts).
+ */
+export async function getMerchantSession(): Promise<MerchantSession | null> {
+  const store = await cookies();
+  const raw = store.get(COOKIE)?.value;
+  const parsed = readSessionCookie(raw);
+  if (!parsed) return null;
+  return perRequest(store, `session:${raw}`, () => loadSession(parsed.scannerId));
 }

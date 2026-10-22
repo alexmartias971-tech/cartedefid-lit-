@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMerchantSession } from "@/lib/merchant-session";
+import { getMerchantRole } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getWaltyPlan } from "@/lib/walty-plan";
 
@@ -18,15 +18,19 @@ export async function GET(request: Request) {
   }
   const supabase = createAdminClient();
 
+  // Le lien d'accès (avant le code PIN) et la session (avec le rôle gérant / employé) sont lus EN MÊME TEMPS.
+  const [accessRes, role] = await Promise.all([
+    token
+      ? supabase.from("scanner_access").select("is_active, businesses(name, logo_url, status)").eq("access_token", token).maybeSingle()
+      : Promise.resolve(null),
+    getMerchantRole(),
+  ]);
+
   // Avant le code PIN : seulement le nom et le logo du commerce (rien d'autre),
   // et seulement si l'accès est actif et le commerce actif.
   let access: { name: string; logo_url: string | null } | null = null;
   if (token) {
-    const { data } = await supabase
-      .from("scanner_access")
-      .select("is_active, businesses(name, logo_url, status)")
-      .eq("access_token", token)
-      .maybeSingle();
+    const data = accessRes?.data;
     const biz = data?.businesses as unknown as { name: string; logo_url: string | null; status: string } | null;
     if (!data || !data.is_active || !biz || biz.status !== "active") {
       return NextResponse.json({ ok: false, error: "Lien d'accès invalide." }, { status: 404, headers: { "Cache-Control": "no-store" } });
@@ -34,8 +38,8 @@ export async function GET(request: Request) {
     access = { name: biz.name, logo_url: biz.logo_url };
   }
 
-  const session = await getMerchantSession();
-  if (!session || (token && session.accessToken !== token)) {
+  const session = role?.session ?? null;
+  if (!role || !session || (token && session.accessToken !== token)) {
     return NextResponse.json({ ok: true, loggedIn: false, business: access }, { headers: { "Cache-Control": "no-store" } });
   }
 
@@ -55,6 +59,10 @@ export async function GET(request: Request) {
       ok: true,
       loggedIn: true,
       business: { name: business?.name ?? "", logo_url: business?.logo_url ?? null },
+      // rôle (comme l'adresse « role ») : walty.fr n'a plus besoin d'une deuxième demande à l'ouverture de l'espace
+      role: role.manager ? "gerant" : "employe",
+      password: role.password,
+      mustChangePassword: role.mustChange,
       label: session.label,
       canNotify: session.canSendNotifications,
       maxNotificationsPerWeek: business?.max_notifications_per_week ?? 0,

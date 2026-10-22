@@ -5,8 +5,14 @@ import { isGoogleConfigured } from "@/lib/env";
 import { addGoogleMessage, upsertGoogleObject } from "@/lib/google/wallet";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CardBundle } from "@/lib/types";
+import { warmWallet } from "@/lib/wallet-warm";
 
 type GoogleMessage = { header: string; body: string };
+
+/** Attend une tâche au plus `ms` millisecondes (la suite ne doit jamais rester bloquée). */
+function atMost(task: Promise<unknown>, ms: number): Promise<unknown> {
+  return Promise.race([task.catch(() => null), new Promise((resolve) => setTimeout(resolve, ms))]);
+}
 
 /** Prévient les iPhone qui ont cette carte, et supprime les iPhone qui l'ont retirée. */
 async function pushApple(cardIds: string[]) {
@@ -35,6 +41,8 @@ export async function syncCard(cardId: string, googleMessage?: GoogleMessage) {
   try {
     const bundle = await loadCardBundle("id", cardId);
     if (!bundle) return;
+    // Les nouvelles images d'abord (8 s au plus) : l'iPhone qui va être prévenu trouvera la carte prête
+    await atMost(warmWallet(bundle), 8000);
     await Promise.allSettled([pushApple([cardId]), pushGoogle(bundle, googleMessage)]);
   } catch (err) {
     console.error("[syncCard]", (err as Error).message);
@@ -44,6 +52,19 @@ export async function syncCard(cardId: string, googleMessage?: GoogleMessage) {
 /** Même chose pour une liste de cartes (notifications, changement de design). */
 export async function syncCards(bundles: CardBundle[], googleMessage?: GoogleMessage) {
   const results = { apple: 0, google: 0, errors: 0 };
+  // Images d'abord, seulement pour les cartes déjà dans un Wallet (ce sont elles que les téléphones vont redemander),
+  // 3 à la fois (les cartes au même point partagent les mêmes images), 6 s au plus : l'envoi n'attend jamais longtemps.
+  const inWallet = bundles.filter((b) => b.card.wallet_platform === "apple" || b.card.google_saved);
+  await atMost(
+    (async () => {
+      for (let i = 0; i < inWallet.length; i += 3) {
+        await Promise.allSettled(
+          inWallet.slice(i, i + 3).map((b) => warmWallet(b, { apple: b.card.wallet_platform === "apple", google: b.card.google_saved })),
+        );
+      }
+    })(),
+    6000,
+  );
   try {
     await pushApple(bundles.map((b) => b.card.id));
     results.apple = bundles.length;

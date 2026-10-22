@@ -16,11 +16,16 @@ import { syncCard } from "@/lib/wallet-sync";
  * l'historique affiche « ajouté à la main » / « hors limite » et l'accès qui l'a faite.
  * Le numéro de série de la carte (contenu du QR code) n'est jamais renvoyé au navigateur.
  *
- * POST { customer_id, action: "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo",
+ * POST { customer_id, action: "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo" | "remove_stamp",
  *        amount?, reward_id?, coupon_id?, over_limit?: boolean, reason?: string }
+ *
+ * « Retirer un tampon » (action remove_stamp, gérant) : à tout moment (erreur, fraude), depuis la fiche du client ou le
+ * résultat d'un scan, avec une raison obligatoire (3 caractères au moins). Jamais en dessous de 0 ; un cadeau déjà remis
+ * n'est pas touché (seul le compteur en cours baisse). Fonction de la base merchant_remove_stamp (migration 019) :
+ * événement « Tampon retiré » (-1, raison) dans l'historique, noté dans merchant_manual_actions, carte du téléphone mise à jour.
  */
-type Action = "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo";
-const ACTIONS: Action[] = ["lookup", "stamp", "redeem", "purchase", "cashback", "reward", "coupon", "undo"];
+type Action = "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo" | "remove_stamp";
+const ACTIONS: Action[] = ["lookup", "stamp", "redeem", "purchase", "cashback", "reward", "coupon", "undo", "remove_stamp"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NO_STORE = { "Cache-Control": "no-store" };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
@@ -69,24 +74,30 @@ function view(bundle: CardBundle) {
   };
 }
 
-/** Passages du jour de la carte, limite du programme, actions à la main restantes pour le commerce. */
+/**
+ * Passages du jour de la carte, limite du programme, actions à la main restantes pour le commerce.
+ * Tout est lu EN MÊME TEMPS (la fiche éclair donne aussi les passages du jour : une lecture de moins).
+ */
 async function counters(bundle: CardBundle, businessId: string) {
   const supabase = createAdminClient();
   const start = gpDayStart();
-  const [visits, manual] = await Promise.all([
-    supabase
+  const [manual, visit] = await Promise.all([
+    supabase.from("merchant_manual_actions").select("id", { count: "exact", head: true }).eq("business_id", businessId).gte("created_at", start),
+    // Fiche éclair (dernière visite, passages du jour, limite), comme après un scan
+    visitInfo(bundle).catch(() => null),
+  ]);
+  const max = Number(bundle.program.max_stamps_per_day ?? 0);
+  let today = visit?.today_count;
+  if (today == null) {
+    const { count } = await supabase
       .from("stamp_events")
       .select("id", { count: "exact", head: true })
       .eq("card_id", bundle.card.id)
       .in("event_type", ["stamp", "purchase"])
       .is("undone_at", null)
-      .gte("created_at", start),
-    supabase.from("merchant_manual_actions").select("id", { count: "exact", head: true }).eq("business_id", businessId).gte("created_at", start),
-  ]);
-  const today = visits.count ?? 0;
-  const max = Number(bundle.program.max_stamps_per_day ?? 0);
-  // Fiche éclair (dernière visite, passages du jour, limite), comme après un scan
-  const visit = await visitInfo(bundle).catch(() => null);
+      .gte("created_at", start);
+    today = count ?? 0;
+  }
   return { visits_today: today, max_per_day: max, limit_reached: max > 0 && today >= max, manual_left: Math.max(0, 30 - (manual.count ?? 0)), visit };
 }
 
@@ -115,23 +126,20 @@ export async function POST(request: Request) {
   if (!UUID.test(customerId)) return json({ ok: false, error: "Client introuvable." }, 404);
   if (!ACTIONS.includes(action)) return json({ ok: false, error: "Action inconnue." }, 400);
 
-  // La carte du client, dans le commerce de la session uniquement
+  // La carte du client, dans le commerce de la session uniquement (client et carte lus en même temps)
   const supabase = createAdminClient();
-  const { data: customer } = await supabase
-    .from("customers")
-    .select("id")
-    .eq("id", customerId)
-    .eq("business_id", session.businessId)
-    .maybeSingle();
+  const [{ data: customer }, { data: cardRow }] = await Promise.all([
+    supabase.from("customers").select("id").eq("id", customerId).eq("business_id", session.businessId).maybeSingle(),
+    supabase
+      .from("cards")
+      .select("id, loyalty_programs!inner(business_id)")
+      .eq("customer_id", customerId)
+      .eq("loyalty_programs.business_id", session.businessId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
   if (!customer) return json({ ok: false, error: "Client introuvable." }, 404);
-  const { data: cardRow } = await supabase
-    .from("cards")
-    .select("id, loyalty_programs!inner(business_id)")
-    .eq("customer_id", customerId)
-    .eq("loyalty_programs.business_id", session.businessId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
   const before = cardRow ? await loadCardBundle("id", cardRow.id) : null;
   if (!before || before.program.business_id !== session.businessId) {
     return json({ ok: false, error: "Ce client n'a pas encore de carte." }, 404);
@@ -153,8 +161,31 @@ export async function POST(request: Request) {
     return json({ ok: true, done: "Dernier passage annulé.", ...(afterBundle ? { ...view(afterBundle), ...(await counters(afterBundle, session.businessId)) } : {}) });
   }
 
-  const overLimit = body.over_limit === true;
   const reason = typeof body.reason === "string" ? body.reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+
+  // Retirer 1 tampon (erreur, fraude) : raison obligatoire, jamais en dessous de 0, tout est revérifié par la base
+  if (action === "remove_stamp") {
+    if (before.program.mode !== "stamps") return json({ ok: false, error: "Cette carte ne fonctionne pas avec des tampons." }, 400);
+    if (reason.length < 3) return json({ ok: false, error: "Indiquez la raison (3 caractères au moins)." }, 400);
+    const { data, error } = await supabase.rpc("merchant_remove_stamp", { p_card: before.card.id, p_scanner: session.scannerId, p_reason: reason });
+    if (error) {
+      console.error("[manual remove_stamp]", error.message);
+      return json({ ok: false, error: "Erreur serveur, réessayez." }, 500);
+    }
+    const r = data as { ok: boolean; error?: string; forbidden?: boolean; rate_limited?: boolean; was_ready?: boolean; stamps?: number };
+    if (!r?.ok) return json(r ?? { ok: false, error: "Action impossible." }, r?.forbidden ? 403 : r?.rate_limited ? 429 : 409);
+    // La carte du téléphone du client se met à jour juste après la réponse (sans notification)
+    after(() => syncCard(before.card.id));
+    const afterBundle = await loadCardBundle("id", before.card.id);
+    return json({
+      ok: true,
+      done: `Tampon retiré ✓${r.was_ready ? " Le cadeau n'est plus prêt." : ""} (raison notée dans l'historique)`,
+      removed: true,
+      ...(afterBundle ? { ...view(afterBundle), ...(await counters(afterBundle, session.businessId)) } : {}),
+    });
+  }
+
+  const overLimit = body.over_limit === true;
   if (overLimit && action !== "stamp") return json({ ok: false, error: "Le dépassement de la limite ne concerne que les tampons." }, 400);
   if (overLimit && reason.length < 3) return json({ ok: false, error: "Indiquez la raison du tampon hors limite." }, 400);
   const amount = Math.round(Number(String(body.amount ?? "").replace(",", ".")) * 100) / 100;

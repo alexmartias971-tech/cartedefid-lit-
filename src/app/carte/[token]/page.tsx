@@ -1,10 +1,12 @@
 import type { Viewport } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import QRCode from "qrcode";
 import { computeCardState } from "@/lib/card-state";
 import { loadCardBundle } from "@/lib/cards";
 import { appUrl, isAppleConfigured, isGoogleConfigured } from "@/lib/env";
+import { warmWallet } from "@/lib/wallet-warm";
 import CardView from "./CardView";
 
 export const metadata = { title: "Ma carte de fidélité" };
@@ -33,6 +35,8 @@ export default async function CardPage({
   const isAndroid = /Android/i.test(ua);
   const apple = isAppleConfigured() && !isAndroid;
   const google = isGoogleConfigured() && !isIOS;
+  // Pendant que le client lit sa page, on prépare sa carte Wallet : le bouton « Ajouter » répondra tout de suite
+  if (bundle.business.status === "active" && (apple || google)) after(() => warmWallet(bundle, { apple, google }));
   // Cadeau prêt : QR code à montrer en caisse
   const { card, program, tiers, catalog } = bundle;
   const giftQr = computeCardState(program, card, tiers, catalog).rewardReady

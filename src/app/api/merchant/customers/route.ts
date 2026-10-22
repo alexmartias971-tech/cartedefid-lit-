@@ -26,7 +26,8 @@ export async function GET(request: Request) {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(4, 0, 0, 0);
 
-  const [{ data: customers }, total, stampsMonth, rewards] = await Promise.all([
+  // tout est lu en même temps, programme compris (une seule attente réseau)
+  const [{ data: customers }, total, stampsMonth, rewards, { data: programData }] = await Promise.all([
     query,
     supabase.from("customers").select("id", { count: "exact", head: true }).eq("business_id", session.businessId),
     supabase
@@ -41,13 +42,8 @@ export async function GET(request: Request) {
       .select("id", { count: "exact", head: true })
       .eq("business_id", session.businessId)
       .in("event_type", ["reward_redeemed", "points_redeemed", "coupon_used", "cashback_used"]),
+    supabase.from("loyalty_programs").select("*, program_tiers(*)").eq("business_id", session.businessId).single(),
   ]);
-
-  const { data: programData } = await supabase
-    .from("loyalty_programs")
-    .select("*, program_tiers(*)")
-    .eq("business_id", session.businessId)
-    .single();
   const { program_tiers: tiers = [], ...program } = (programData ?? {}) as Program & { program_tiers?: Tier[] };
   type CardRow = {
     stamps_count: number;

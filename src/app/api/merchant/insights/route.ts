@@ -1,8 +1,6 @@
-import { getMerchantSession } from "@/lib/merchant-session";
-import { DAY_MS, expired, fetchAll, GP_OFFSET_MS, json, REWARD_TYPES, VISIT_TYPES } from "@/lib/merchant-space";
+import { DAY_MS, fetchAll, GP_OFFSET_MS, json, requireManager, REWARD_TYPES, VISIT_TYPES } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isEssentiel, planRefused } from "@/lib/walty-plan";
-import { getMerchantRole } from "@/lib/merchant-role";
 
 /** Début (heure de Guadeloupe) du mois, `back` mois en arrière. */
 function monthStart(back: number) {
@@ -16,13 +14,12 @@ function monthStart(back: number) {
  * Seulement des totaux : aucune donnée personnelle. Formule Essentiel : 403 (Tout compris seulement).
  */
 export async function GET() {
-  const session = await getMerchantSession();
-  if (!session) return expired();
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
-  if (await isEssentiel(session.businessId)) return planRefused();
+  // réservé au gérant (connexion e-mail + mot de passe), vérifié ici (plus par la passerelle walty.fr)
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
+  // La formule est lue EN MÊME TEMPS que les chiffres ; Essentiel => 403, rien n'est renvoyé
+  const essentiel = isEssentiel(session.businessId);
   const supabase = createAdminClient();
   const biz = session.businessId;
   const since6m = monthStart(5).toISOString();
@@ -66,9 +63,11 @@ export async function GET() {
       ),
     ]);
   } catch (err) {
+    if (await essentiel) return planRefused();
     console.error("[espace insights]", (err as Error).message);
     return json({ ok: false, error: "Impossible de charger vos chiffres détaillés. Réessayez." }, 500);
   }
+  if (await essentiel) return planRefused();
 
   // Affluence (90 derniers jours) : par jour de la semaine (lundi → dimanche) et par heure
   const weekday = Array(7).fill(0) as number[];

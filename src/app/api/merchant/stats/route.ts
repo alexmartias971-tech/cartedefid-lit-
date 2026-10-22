@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { getMerchantSession } from "@/lib/merchant-session";
-import { fetchAll } from "@/lib/merchant-space";
+import { fetchAll, requireManager } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isEssentiel, planRefused } from "@/lib/walty-plan";
-import { getMerchantRole } from "@/lib/merchant-role";
 
 const DAY = 86400000;
 const GP_OFFSET = 4 * 3600 * 1000; // Guadeloupe = UTC-4, sans heure d'été
@@ -17,13 +15,12 @@ function monthStart(back = 0) {
 
 /** Statistiques du commerce, pour l'espace commerçant (walty.fr/espace). Formule Essentiel : 403 (Tout compris seulement). */
 export async function GET() {
-  const session = await getMerchantSession();
-  if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
-  if (await isEssentiel(session.businessId)) return planRefused();
+  // réservé au gérant (connexion e-mail + mot de passe), vérifié ici (plus par la passerelle walty.fr)
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
+  // La formule est lue EN MÊME TEMPS que les chiffres (une attente réseau de moins) ; Essentiel => 403, rien n'est renvoyé
+  const essentiel = isEssentiel(session.businessId);
   const supabase = createAdminClient();
   const biz = session.businessId;
   const thisMonth = monthStart(0).toISOString();
@@ -103,6 +100,7 @@ export async function GET() {
       .order("last_visit_at", { ascending: false, nullsFirst: false })
       .limit(300),
   ]);
+  if (await essentiel) return planRefused();
 
   // Passages par jour, sur les 14 derniers jours
   const days: { day: string; count: number }[] = [];

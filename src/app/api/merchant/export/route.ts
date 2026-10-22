@@ -60,7 +60,7 @@ type CustomerRow = {
   marketing_optin: boolean;
   cards: { stamps_count: number; lifetime_visits: number; created_at: string }[] | null;
 };
-type ManualRow = { stamp_event_id: string | null; over_limit: boolean; reason: string | null };
+type ManualRow = { stamp_event_id: string | null; action: string; over_limit: boolean; reason: string | null };
 
 export async function GET(request: Request) {
   const role = await getMerchantRole();
@@ -122,7 +122,7 @@ export async function GET(request: Request) {
           (from, to) =>
             supabase
               .from("merchant_manual_actions")
-              .select("stamp_event_id, over_limit, reason")
+              .select("stamp_event_id, action, over_limit, reason")
               .eq("business_id", biz)
               .not("stamp_event_id", "is", null)
               .order("created_at", { ascending: false })
@@ -139,7 +139,13 @@ export async function GET(request: Request) {
           const v = mapEvent(e);
           const m = byEvent.get(e.id);
           const action = [v.label, v.detail ? `(${v.detail})` : "", e.undone_at ? `- annulé à ${time(e.undone_at)}` : ""].filter(Boolean).join(" ");
-          const hand = m ? (m.over_limit ? `À la main, hors limite${m.reason ? ` (raison : ${m.reason})` : ""}` : "À la main") : "";
+          const hand = m
+            ? m.action === "remove_stamp"
+              ? `Retiré par le gérant${m.reason ? ` (raison : ${m.reason})` : ""}`
+              : m.over_limit
+                ? `À la main, hors limite${m.reason ? ` (raison : ${m.reason})` : ""}`
+                : "À la main"
+            : "";
           return [cell(day(e.created_at)), cell(time(e.created_at)), cell(v.customer), cell(action), cell(v.by), cell(hand)];
         }),
       );

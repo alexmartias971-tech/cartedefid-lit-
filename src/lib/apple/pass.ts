@@ -1,18 +1,38 @@
 import "server-only";
-import { PKPass, PassType } from "passkit-generator";
 import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
-import { primaryLogoPng, primaryNamePng, squareLogoPng, wideLogoPng } from "@/lib/logo";
-import { renderCardPoster, renderCardStrip } from "@/lib/strip";
 import type { CardBundle } from "@/lib/types";
+import { ByteCache, hashOf, once } from "@/lib/wallet-cache";
+import { ensurePassImages, getPassImages, imageKeys, type ImageSource } from "@/lib/wallet-images";
+import type { PassImageFlags } from "@/lib/apple/pass-images";
 
 /**
  * Fabrique le fichier .pkpass (la carte Apple Wallet) d'un client.
  * Chaque fois qu'une carte change (tampon, notification), Apple rappelle
  * notre serveur et on refabrique ce fichier avec les nouvelles valeurs.
+ *
+ * Rapidité (oct. 2026) : le contenu de la carte (textes, champs) est calculé en premier, sans aucune image.
+ * Les images viennent du cache (wallet-images.ts) : elles ne sont dessinées qu'une fois par état de carte.
+ * Le fichier signé est gardé en mémoire : si rien n'a changé, il est renvoyé tel quel.
  */
-export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
+
+// Champs d'une carte (même forme que pour passkit-generator)
+type PassField = { key: string; value: string; [k: string]: unknown };
+type StoreFields = Record<"headerFields" | "primaryFields" | "secondaryFields" | "auxiliaryFields" | "backFields", PassField[]>;
+type PosterFields = Record<"headerFields" | "primaryFields" | "footerFields" | "backFields", PassField[]>;
+
+/** Tout le contenu d'une carte, sauf les images (calcul instantané, sert aussi d'empreinte pour le cache). */
+export type ApplePassDescription = {
+  props: Record<string, unknown>;
+  store: StoreFields;
+  poster: PosterFields;
+  featuredActions: { identifier: string; type: string; url: string }[];
+  barcode: { format: "PKBarcodeFormatQR"; message: string; messageEncoding: string };
+  images: PassImageFlags;
+};
+
+export function describeApplePass(bundle: CardBundle): ApplePassDescription {
   const { card, customer, program, business, tiers, catalog, coupons } = bundle;
   const state = computeCardState(program, card, tiers, catalog);
   const design = designFromProgram(program);
@@ -22,27 +42,6 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   const hasLogo = !!business.logo_url;
   const showTopLogo = hasLogo && design.layout.topLogo !== false;
   const showName = design.showLogoText || !showTopLogo;
-  const none = Promise.resolve(null);
-  const [strip1, strip2, strip3, icon1, icon2, icon3, logo1, logo2, logo3, art1, art2, art3, plogo1, plogo2, plogo3] = await Promise.all([
-    renderCardStrip(bundle, 1),
-    renderCardStrip(bundle, 2),
-    renderCardStrip(bundle, 3),
-    // Icône : 38 × 38 points (guide Apple, juin 2026)
-    squareLogoPng(business, program, 38),
-    squareLogoPng(business, program, 76),
-    squareLogoPng(business, program, 114),
-    showTopLogo ? wideLogoPng(business, program, 1) : none,
-    showTopLogo ? wideLogoPng(business, program, 2) : none,
-    showTopLogo ? wideLogoPng(business, program, 3) : none,
-    // iOS 27 : carte « poster » avec la photo sur toute la carte (358 × 448 points)
-    renderCardPoster(bundle, 1),
-    renderCardPoster(bundle, 2),
-    renderCardPoster(bundle, 3),
-    // iOS 27 n'affiche pas de texte à côté du logo : sans logo, on écrit le nom en image
-    showTopLogo ? primaryLogoPng(business, 1) : showName ? primaryNamePng(business, program, 1) : none,
-    showTopLogo ? primaryLogoPng(business, 2) : showName ? primaryNamePng(business, program, 2) : none,
-    showTopLogo ? primaryLogoPng(business, 3) : showName ? primaryNamePng(business, program, 3) : none,
-  ]);
 
   const url = appUrl();
   // Apple exige une adresse https pour les mises à jour automatiques.
@@ -65,46 +64,23 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
         }
       : {};
 
-  const pass = new PKPass(
-    {
-      "icon.png": icon1,
-      "icon@2x.png": icon2,
-      "icon@3x.png": icon3,
-      ...(logo1 && logo2 && logo3 ? { "logo.png": logo1, "logo@2x.png": logo2, "logo@3x.png": logo3 } : {}),
-      "strip.png": strip1,
-      "strip@2x.png": strip2,
-      "strip@3x.png": strip3,
-      "artwork.png": art1,
-      "artwork@2x.png": art2,
-      "artwork@3x.png": art3,
-      ...(plogo1 && plogo2 && plogo3
-        ? { "primaryLogo.png": plogo1, "primaryLogo@2x.png": plogo2, "primaryLogo@3x.png": plogo3 }
-        : {}),
-    },
-    {
-      wwdr: requireBase64Env("APPLE_WWDR_BASE64"),
-      signerCert: requireBase64Env("APPLE_PASS_CERT_BASE64"),
-      signerKey: requireBase64Env("APPLE_PASS_KEY_BASE64"),
-      signerKeyPassphrase: process.env.APPLE_PASS_KEY_PASSPHRASE || undefined,
-    },
-    {
-      formatVersion: 1,
-      passTypeIdentifier: requireEnv("APPLE_PASS_TYPE_ID"),
-      teamIdentifier: requireEnv("APPLE_TEAM_ID"),
-      serialNumber: card.serial_number,
-      organizationName: business.name,
-      description: `Carte de fidélité ${business.name}`,
-      ...(showName ? { logoText: business.name } : {}),
-      backgroundColor: hexToRgb(state.tier?.color || program.background_color),
-      foregroundColor: hexToRgb(program.foreground_color),
-      labelColor: hexToRgb(program.label_color),
-      sharingProhibited: true,
-      ...locations,
-      ...webService,
-    },
-  );
+  const props = {
+    formatVersion: 1,
+    passTypeIdentifier: requireEnv("APPLE_PASS_TYPE_ID"),
+    teamIdentifier: requireEnv("APPLE_TEAM_ID"),
+    serialNumber: card.serial_number,
+    organizationName: business.name,
+    description: `Carte de fidélité ${business.name}`,
+    ...(showName ? { logoText: business.name } : {}),
+    backgroundColor: hexToRgb(state.tier?.color || program.background_color),
+    foregroundColor: hexToRgb(program.foreground_color),
+    labelColor: hexToRgb(program.label_color),
+    sharingProhibited: true,
+    ...locations,
+    ...webService,
+  };
 
-  const store = new PassType("storeCard");
+  const store: StoreFields = { headerFields: [], primaryFields: [], secondaryFields: [], auxiliaryFields: [], backFields: [] };
 
   // Zones choisies dans l'éditeur visuel (sinon : disposition automatique d'avant)
   const nextReward =
@@ -265,7 +241,7 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   });
 
   // iOS 27 et plus : carte « poster » (photo plein format). Les iPhone plus anciens gardent la carte classique.
-  const poster = new PassType("posterGeneric");
+  const poster: PosterFields = { headerFields: [], primaryFields: [], footerFields: [], backFields: [] };
   // Disposition Apple iOS 27 : en-tête en haut à droite, QR code au milieu, champs en bas, 1 ligne de pied.
   if (slots) {
     if (slots.top) poster.headerFields.push({ ...slots.top, key: `p${slots.top.key}`, textAlignment: "PKTextAlignmentRight" });
@@ -288,13 +264,88 @@ export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
   }
   poster.backFields.push(...store.backFields.map((f) => ({ ...f, key: `p-${f.key}` })));
 
+  return {
+    props,
+    store,
+    poster,
+    featuredActions: [{ identifier: "ma-carte", type: "viewOffersRewards", url: `${url}/carte/${card.web_token}` }],
+    barcode: { format: "PKBarcodeFormatQR", message: card.serial_number, messageEncoding: "iso-8859-1" },
+    images: { showTopLogo, showName },
+  };
+}
+
+/** Signe la carte (code d'origine : mêmes certificats, mêmes types de carte, même ordre). */
+async function signPass(d: ApplePassDescription, files: Record<string, Buffer>): Promise<Buffer> {
+  const { PKPass, PassType } = await import("passkit-generator");
+  const pass = new PKPass(
+    files,
+    {
+      wwdr: requireBase64Env("APPLE_WWDR_BASE64"),
+      signerCert: requireBase64Env("APPLE_PASS_CERT_BASE64"),
+      signerKey: requireBase64Env("APPLE_PASS_KEY_BASE64"),
+      signerKeyPassphrase: process.env.APPLE_PASS_KEY_PASSPHRASE || undefined,
+    },
+    d.props,
+  );
+
+  const store = new PassType("storeCard");
+  store.headerFields.push(...d.store.headerFields);
+  store.primaryFields.push(...d.store.primaryFields);
+  store.secondaryFields.push(...d.store.secondaryFields);
+  store.auxiliaryFields.push(...d.store.auxiliaryFields);
+  store.backFields.push(...d.store.backFields);
+
+  const poster = new PassType("posterGeneric");
+  poster.headerFields.push(...d.poster.headerFields);
+  poster.primaryFields.push(...d.poster.primaryFields);
+  poster.footerFields.push(...d.poster.footerFields);
+  poster.backFields.push(...d.poster.backFields);
+
   pass.types.push(poster, store);
-  pass.featuredActions = [{ identifier: "ma-carte", type: "viewOffersRewards", url: `${url}/carte/${card.web_token}` }];
-  pass.setBarcodes({
-    format: "PKBarcodeFormatQR",
-    message: card.serial_number,
-    messageEncoding: "iso-8859-1",
-  });
+  pass.featuredActions = d.featuredActions as typeof pass.featuredActions;
+  pass.setBarcodes(d.barcode);
 
   return pass.getAsBuffer();
+}
+
+// Fichiers .pkpass déjà signés, en mémoire (~250 à 350 Ko chacun)
+const passMemory = new ByteCache(32 * 1024 * 1024);
+
+export type ApplePassResult = {
+  buffer: Buffer;
+  /** "memory" : fichier déjà prêt ; sinon images venues de "storage" (cache partagé) ou "rendered" (dessinées). */
+  source: "memory" | ImageSource;
+  ms: { images: number; sign: number };
+};
+
+/** Le fichier .pkpass d'une carte, le plus vite possible (cache), toujours à jour (empreinte du contenu). */
+export async function getApplePass(bundle: CardBundle): Promise<ApplePassResult> {
+  const d = describeApplePass(bundle);
+  // L'empreinte couvre tout le contenu de la carte + ses images + le certificat utilisé pour signer
+  const key = hashOf({
+    d,
+    images: imageKeys(bundle, "apple", d.images).path,
+    cert: hashOf(process.env.APPLE_PASS_CERT_BASE64 ?? "", 16),
+  });
+  const hit = passMemory.get(key);
+  if (hit) return { buffer: hit, source: "memory", ms: { images: 0, sign: 0 } };
+  return once(`pass:${key}`, async () => {
+    const t0 = performance.now();
+    const { files, source } = await getPassImages(bundle, d.images);
+    const t1 = performance.now();
+    const buffer = await signPass(d, files);
+    const t2 = performance.now();
+    passMemory.set(key, buffer);
+    return { buffer, source, ms: { images: Math.round(t1 - t0), sign: Math.round(t2 - t1) } };
+  });
+}
+
+/** Compatibilité : même résultat qu'avant (le fichier .pkpass), désormais servi depuis le cache. */
+export async function buildApplePass(bundle: CardBundle): Promise<Buffer> {
+  return (await getApplePass(bundle)).buffer;
+}
+
+/** Prépare les images de la carte à l'avance (après l'inscription, après un tampon) : le clic du client sera instantané. */
+export async function warmApplePass(bundle: CardBundle): Promise<ImageSource> {
+  return ensurePassImages(bundle, describeApplePass(bundle).images);
 }

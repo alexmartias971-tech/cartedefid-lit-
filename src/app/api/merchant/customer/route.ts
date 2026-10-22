@@ -17,23 +17,38 @@ export async function GET(request: Request) {
   if (!UUID.test(id)) return json({ ok: false, error: "Client introuvable." }, 404);
 
   const supabase = createAdminClient();
-  const { data: customer } = await supabase
-    .from("customers")
-    .select("id, first_name, last_name, phone, email, birth_date, marketing_optin, created_at, last_visit_at")
-    .eq("id", id)
-    .eq("business_id", session.businessId)
-    .maybeSingle();
+  // le client et sa carte (du MÊME commerce) lus en même temps
+  const [{ data: customer }, { data: cardRow }] = await Promise.all([
+    supabase
+      .from("customers")
+      .select("id, first_name, last_name, phone, email, birth_date, marketing_optin, created_at, last_visit_at")
+      .eq("id", id)
+      .eq("business_id", session.businessId)
+      .maybeSingle(),
+    supabase
+      .from("cards")
+      .select("id, loyalty_programs!inner(business_id)")
+      .eq("customer_id", id)
+      .eq("loyalty_programs.business_id", session.businessId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
   if (!customer) return json({ ok: false, error: "Client introuvable." }, 404);
 
-  const { data: cardRow } = await supabase
-    .from("cards")
-    .select("id, loyalty_programs!inner(business_id)")
-    .eq("customer_id", customer.id)
-    .eq("loyalty_programs.business_id", session.businessId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  const bundle = cardRow ? await loadCardBundle("id", cardRow.id) : null;
+  // la carte complète et son historique, en même temps
+  const [bundle, eventsRes] = cardRow
+    ? await Promise.all([
+        loadCardBundle("id", cardRow.id),
+        supabase
+          .from("stamp_events")
+          .select(EVENT_SELECT)
+          .eq("card_id", cardRow.id)
+          .eq("business_id", session.businessId)
+          .order("created_at", { ascending: false })
+          .limit(60),
+      ])
+    : [null, null];
 
   let card = null;
   let history: ReturnType<typeof mapEvent>[] = [];
@@ -64,14 +79,7 @@ export async function GET(request: Request) {
       created_at: c.created_at,
       coupons: coupons.map((k) => ({ title: k.title, kind: k.kind, expires_at: k.expires_at })),
     };
-    const { data: events } = await supabase
-      .from("stamp_events")
-      .select(EVENT_SELECT)
-      .eq("card_id", c.id)
-      .eq("business_id", session.businessId)
-      .order("created_at", { ascending: false })
-      .limit(60);
-    const rows = (events ?? []) as unknown as EventRow[];
+    const rows = (eventsRes?.data ?? []) as unknown as EventRow[];
     const canUndo = undoableIds(rows, session.scannerId);
     history = rows.map((e) => mapEvent(e, canUndo.has(e.id)));
   }

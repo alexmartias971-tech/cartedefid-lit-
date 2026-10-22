@@ -1,8 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { loadCardBundlesByIds } from "@/lib/cards";
-import { getMerchantSession } from "@/lib/merchant-session";
 import { getMerchantRole } from "@/lib/merchant-role";
-import { fetchAll } from "@/lib/merchant-space";
+import { fetchAll, requireManager } from "@/lib/merchant-space";
 import { createNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCards } from "@/lib/wallet-sync";
@@ -17,19 +16,17 @@ const noStore = { "Cache-Control": "no-store" };
  * Formule Essentiel : pas d'offres (403, Tout compris seulement).
  */
 export async function GET() {
-  const session = await getMerchantSession();
-  if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
-  // réservé au gérant (connexion e-mail + mot de passe), comme dans la passerelle walty.fr
-  if (!(await getMerchantRole())?.manager) {
-    return Response.json({ ok: false, error: "Réservé au gérant : connectez-vous avec votre e-mail et votre mot de passe." }, { status: 403 });
-  }
-  if (await isEssentiel(session.businessId)) return planRefused();
+  // réservé au gérant (connexion e-mail + mot de passe), vérifié ici (plus par la passerelle walty.fr)
+  const { role, res } = await requireManager();
+  if (!role) return res;
+  const session = role.session;
   const supabase = createAdminClient();
-  const { data: program } = await supabase
-    .from("loyalty_programs")
-    .select("id, welcome_offer, birthday_offer")
-    .eq("business_id", session.businessId)
-    .maybeSingle();
+  // formule et programme lus en même temps (une attente réseau de moins)
+  const [essentiel, { data: program }] = await Promise.all([
+    isEssentiel(session.businessId),
+    supabase.from("loyalty_programs").select("id, welcome_offer, birthday_offer").eq("business_id", session.businessId).maybeSingle(),
+  ]);
+  if (essentiel) return planRefused();
   if (!program) return NextResponse.json({ ok: true, offers: [], welcome: null, birthday: null, canSend: session.canSendNotifications });
 
   // Supabase renvoie 1 000 lignes au maximum par demande : on lit par pages (une offre = une ligne par client)
@@ -82,15 +79,18 @@ export async function GET() {
 
 /** Ajouter une offre sur la carte de tous les clients (et, si demandé, les prévenir par notification). */
 export async function POST(request: Request) {
-  const session = await getMerchantSession();
-  if (!session) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
-  if (await isEssentiel(session.businessId)) return planRefused();
+  // gérant prouvé (connexion par mot de passe) : un employé qui connaît le PIN ne peut pas créer d'offre
+  const role = await getMerchantRole();
+  if (!role) return NextResponse.json({ ok: false, error: "Session expirée : retapez votre code PIN." }, { status: 401 });
+  const session = role.session;
   if (!session.canSendNotifications) {
     return NextResponse.json({ ok: false, error: "Les offres ne sont pas activées pour cet accès." }, { status: 403 });
   }
-  // gérant prouvé (connexion par mot de passe) : un employé qui connaît le PIN ne peut pas créer d'offre
-  if (!(await getMerchantRole())?.manager) {
-    return NextResponse.json({ ok: false, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour créer une offre." }, { status: 403 });
+  if (!role.manager) {
+    return NextResponse.json(
+      { ok: false, forbidden: true, error: "Connectez-vous avec l'e-mail et le mot de passe du gérant pour créer une offre." },
+      { status: 403 },
+    );
   }
   const body = (await request.json().catch(() => ({}))) as { title?: string; days?: number | null; notify?: boolean };
   const title = String(body.title ?? "").trim().slice(0, 120);
@@ -98,17 +98,21 @@ export async function POST(request: Request) {
   const days = Number(body.days) > 0 ? Math.min(90, Math.round(Number(body.days))) : null;
 
   const supabase = createAdminClient();
-  const { data: program } = await supabase.from("loyalty_programs").select("id").eq("business_id", session.businessId).single();
+  // formule, programme et anti double-clic lus en même temps (une attente réseau au lieu de trois)
+  const [essentiel, { data: program }, { count: dup }] = await Promise.all([
+    isEssentiel(session.businessId),
+    supabase.from("loyalty_programs").select("id").eq("business_id", session.businessId).single(),
+    // Anti double-clic : la même offre vient d'être ajoutée (filtre par commerce via le programme)
+    supabase
+      .from("coupons")
+      .select("id, loyalty_programs!inner(business_id)", { count: "exact", head: true })
+      .eq("loyalty_programs.business_id", session.businessId)
+      .eq("kind", "manual")
+      .eq("title", title)
+      .gte("created_at", new Date(Date.now() - 10 * 60000).toISOString()),
+  ]);
+  if (essentiel) return planRefused();
   if (!program) return NextResponse.json({ ok: false, error: "Carte introuvable." }, { status: 404 });
-
-  // Anti double-clic : la même offre vient d'être ajoutée
-  const { count: dup } = await supabase
-    .from("coupons")
-    .select("id", { count: "exact", head: true })
-    .eq("program_id", program.id)
-    .eq("kind", "manual")
-    .eq("title", title)
-    .gte("created_at", new Date(Date.now() - 10 * 60000).toISOString());
   if ((dup ?? 0) > 0) return NextResponse.json({ ok: false, error: "Cette offre vient déjà d'être ajoutée." }, { status: 409 });
 
   // TOUTES les cartes (par pages de 1 000 : sinon seuls les 1 000 premiers clients recevraient l'offre)
@@ -127,14 +131,15 @@ export async function POST(request: Request) {
   const expires = days ? new Date(Date.now() + days * 86400000).toISOString() : null;
   for (let i = 0; i < ids.length; i += 500) {
     const slice = ids.slice(i, i + 500);
-    const { error } = await supabase
-      .from("coupons")
-      .insert(slice.map((card_id) => ({ card_id, program_id: program.id, title, kind: "manual", expires_at: expires })));
+    // l'offre et la date de mise à jour des cartes (pour les iPhone) partent en même temps
+    const [{ error }] = await Promise.all([
+      supabase.from("coupons").insert(slice.map((card_id) => ({ card_id, program_id: program.id, title, kind: "manual", expires_at: expires }))),
+      supabase.from("cards").update({ updated_at: new Date().toISOString() }).in("id", slice),
+    ]);
     if (error) {
       console.error("[offers]", error.message);
       return NextResponse.json({ ok: false, error: "Erreur serveur, réessayez." }, { status: 500 });
     }
-    await supabase.from("cards").update({ updated_at: new Date().toISOString() }).in("id", slice);
   }
 
   let warning: string | undefined;
