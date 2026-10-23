@@ -41,15 +41,15 @@ export type CreateNotificationInput = {
   createdBy: "admin" | "merchant";
   /**
    * Le GÉRANT envoie quand même, au-delà de la limite de la semaine, après l'avertissement (« J'ai compris »).
-   * Accepté seulement : sans répétition, 3 fois par semaine au plus (MAX_OVERRIDES_PER_WEEK), et jamais un 4e message
-   * en 24 heures (Google Wallet n'affiche pas plus de 3 notifications par carte en 24 h).
+   * Accepté sans plafond, seulement sans répétition. Au-delà de 3 messages en 24 heures, la réponse porte googleWarning
+   * (Google Wallet n'affiche pas plus de 3 notifications par carte en 24 h ; Apple les affiche).
    * Chaque envoi « au-delà » est noté dans merchant_notification_overrides (qui, quand, quel message).
    */
   overLimit?: { scannerId: string; scannerLabel: string } | null;
 };
 
-/** Envois « au-delà de la limite » permis par semaine (lundi → dimanche, heure de Guadeloupe). */
-export const MAX_OVERRIDES_PER_WEEK = 3;
+/** Envois « au-delà de la limite » par semaine : plus de plafond depuis le 23 oct. (le gérant décide). Gardé pour l'affichage. */
+export const MAX_OVERRIDES_PER_WEEK = 999;
 /** Google Wallet : pas plus de 3 notifications par carte en 24 heures (les suivantes ne s'affichent pas). */
 export const GOOGLE_MAX_PER_24H = 3;
 
@@ -68,7 +68,7 @@ export async function overridesInWeek(businessId: string, date: Date): Promise<n
 /** Crée une notification (immédiate ou programmée) en respectant la limite par semaine. */
 export async function createNotification(
   input: CreateNotificationInput,
-): Promise<{ ok: true; id: string; sentNow: boolean; overLimit?: boolean } | { ok: false; error: string; limitReached?: boolean }> {
+): Promise<{ ok: true; id: string; sentNow: boolean; overLimit?: boolean; googleWarning?: boolean } | { ok: false; error: string; limitReached?: boolean }> {
   const message = input.message.trim();
   if (message.length === 0) return { ok: false, error: "Écris un message." };
   if (message.length > 180) return { ok: false, error: "Le message doit faire 180 caractères maximum." };
@@ -90,6 +90,7 @@ export async function createNotification(
 
   const used = await countInWeek(input.businessId, sendAt);
   let overLimit = false;
+  let googleWarning = false;
   if (used >= business.max_notifications_per_week) {
     if (!input.overLimit) {
       return {
@@ -98,32 +99,19 @@ export async function createNotification(
         error: `Limite atteinte : ${business.max_notifications_per_week} notification(s) par semaine (du lundi au dimanche). Choisis une autre semaine.`,
       };
     }
-    // « Envoyer quand même » (gérant, avertissement accepté) : jamais répété, 3 fois par semaine, 3 messages en 24 h au plus
+    // « Envoyer quand même » (gérant, avertissement accepté) : jamais répété, mais plus aucun plafond (choix d'Alexandre, 23 oct. :
+    // prévenu deux fois, le gérant décide). Au-delà de 3 messages en 24 h, on prévient seulement que Google risque de ne pas l'afficher.
     if (input.repeatEveryDays !== null) {
       return { ok: false, error: "Un message au-delà de la limite ne peut pas être répété. Décochez « Répéter ce message »." };
     }
-    const [overrides, { count: around }] = await Promise.all([
-      overridesInWeek(input.businessId, sendAt),
-      supabase
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("business_id", input.businessId)
-        .in("status", ["scheduled", "sending", "sent"])
-        .gt("send_at", new Date(sendAt.getTime() - DAY).toISOString())
-        .lt("send_at", new Date(sendAt.getTime() + DAY).toISOString()),
-    ]);
-    if (overrides >= MAX_OVERRIDES_PER_WEEK) {
-      return {
-        ok: false,
-        error: `Vous avez déjà envoyé ${MAX_OVERRIDES_PER_WEEK} messages au-delà de la limite cette semaine : c'est le maximum. Vous pourrez de nouveau écrire à vos clients lundi.`,
-      };
-    }
-    if ((around ?? 0) >= GOOGLE_MAX_PER_24H) {
-      return {
-        ok: false,
-        error: `Déjà ${GOOGLE_MAX_PER_24H} messages en 24 heures : Google bloquerait celui-ci. Programmez-le au moins 24 heures après le dernier.`,
-      };
-    }
+    const { count: around } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("business_id", input.businessId)
+      .in("status", ["scheduled", "sending", "sent"])
+      .gt("send_at", new Date(sendAt.getTime() - DAY).toISOString())
+      .lt("send_at", new Date(sendAt.getTime() + DAY).toISOString());
+    googleWarning = (around ?? 0) >= GOOGLE_MAX_PER_24H;
     overLimit = true;
   }
 
@@ -160,7 +148,7 @@ export async function createNotification(
 
   const sentNow = sendAt.getTime() <= now + 60 * 1000;
   if (sentNow) await sendNotification(data.id);
-  return { ok: true, id: data.id, sentNow, ...(overLimit ? { overLimit: true } : {}) };
+  return { ok: true, id: data.id, sentNow, ...(overLimit ? { overLimit: true } : {}), ...(googleWarning ? { googleWarning: true } : {}) };
 }
 
 /** Programme la prochaine répétition d'une notification. */
