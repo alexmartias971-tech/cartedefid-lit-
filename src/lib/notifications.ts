@@ -217,10 +217,19 @@ export async function sendNotification(id: string): Promise<void> {
       if (rows.length < 1000) break;
     }
 
-    // On écrit le message sur chaque carte, puis on prévient les téléphones
+    // On écrit le message sur chaque carte, puis on prévient les téléphones.
+    // L'iPhone n'affiche la notification que si le texte du message CHANGE : un message identique au précédent
+    // (ex. le même « Offre du jour » deux fois) passerait inaperçu. Sur les cartes qui ont déjà ce texte, on ajoute
+    // un caractère invisible (U+2060), ou on le retire : la valeur change à chaque envoi, rien ne se voit à l'écran.
+    const INVISIBLE = "⁠";
     for (let i = 0; i < cardIds.length; i += 200) {
       const slice = cardIds.slice(i, i + 200);
-      await supabase.from("cards").update({ last_message: n.message }).in("id", slice);
+      const { data: actuels } = await supabase.from("cards").select("id, last_message").in("id", slice);
+      const dejaLa = new Set(((actuels ?? []) as { id: string; last_message: string | null }[])
+        .filter((c) => c.last_message === n.message).map((c) => c.id));
+      const nouveaux = slice.filter((cid) => !dejaLa.has(cid));
+      if (nouveaux.length) await supabase.from("cards").update({ last_message: n.message }).in("id", nouveaux);
+      if (dejaLa.size) await supabase.from("cards").update({ last_message: n.message + INVISIBLE }).in("id", [...dejaLa]);
       const bundles = await loadCardBundlesByIds(slice);
       await syncCards(bundles, { header: business.name, body: n.message });
     }
