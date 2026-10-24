@@ -24,10 +24,10 @@ export async function GET() {
   // formule et programme lus en même temps (une attente réseau de moins)
   const [essentiel, { data: program }] = await Promise.all([
     isEssentiel(session.businessId),
-    supabase.from("loyalty_programs").select("id, welcome_offer, birthday_offer").eq("business_id", session.businessId).maybeSingle(),
+    supabase.from("loyalty_programs").select("id, welcome_offer").eq("business_id", session.businessId).maybeSingle(),
   ]);
   if (essentiel) return planRefused();
-  if (!program) return NextResponse.json({ ok: true, offers: [], welcome: null, birthday: null, canSend: session.canSendNotifications });
+  if (!program) return NextResponse.json({ ok: true, offers: [], welcome: null, canSend: session.canSendNotifications });
 
   // Supabase renvoie 1 000 lignes au maximum par demande : on lit par pages (une offre = une ligne par client)
   type CouponRow = { title: string; status: string; created_at: string; expires_at: string | null };
@@ -70,7 +70,6 @@ export async function GET() {
       ok: true,
       offers: [...groups.values()].slice(0, 20),
       welcome: program.welcome_offer,
-      birthday: program.birthday_offer,
       canSend: session.canSendNotifications,
     },
     { headers: noStore },

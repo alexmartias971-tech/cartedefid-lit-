@@ -211,7 +211,6 @@ export const BONUS_HELP = {
   signup:
     "Le client commence avec des tampons déjà gagnés. Une carte déjà commencée donne envie d'être finie : c'est le réglage le plus efficace pour faire revenir.",
   welcome: "Une petite offre dès l'inscription, à utiliser lors de la prochaine visite. Elle donne une raison de revenir vite.",
-  birthday: "Le jour de son anniversaire, le client reçoit une offre valable 30 jours (s'il a donné sa date).",
   referral: "Le client invite un ami avec son lien. À la 1re visite de l'ami, le client gagne des tampons ou des points en plus.",
   happy: "Pendant vos heures calmes, chaque passage compte double (ou triple). Idéal pour remplir le creux de l'après-midi.",
   streak: "Le client gagne un bonus s'il vient au moins une fois par semaine plusieurs semaines d'affilée. Un rappel part le jour choisi.",

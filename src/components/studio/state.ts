@@ -62,7 +62,6 @@ export type Draft = {
   back_text: string;
   // Bonus
   welcome_offer: string;
-  birthday_offer: string;
   max_notifications_per_week: number;
   referral_bonus: number;
   bonus_multiplier: number;
@@ -183,7 +182,6 @@ export function initialDraft(business?: Business, program?: Program, tiers: Tier
     relevant_text: business?.relevant_text ?? "",
     back_text: program?.back_text ?? "",
     welcome_offer: program?.welcome_offer ?? "",
-    birthday_offer: program?.birthday_offer ?? "",
     max_notifications_per_week: business?.max_notifications_per_week ?? 2,
     referral_bonus: program?.referral_bonus ?? 0,
     bonus_multiplier: program?.bonus_multiplier ?? 1,
@@ -325,7 +323,6 @@ export function toFormData(d: Draft, images: Images, businessId?: string): FormD
   put("relevant_text", d.relevant_text.trim());
   put("back_text", d.back_text.trim());
   put("welcome_offer", d.welcome_offer.trim());
-  put("birthday_offer", d.birthday_offer.trim());
   put("referral_bonus", d.referral_bonus);
   put("bonus_multiplier", d.bonus_multiplier);
   put("bonus_start_hour", d.bonus_start_hour);

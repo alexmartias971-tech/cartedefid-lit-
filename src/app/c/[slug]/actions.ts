@@ -8,7 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { warmCard } from "@/lib/wallet-warm";
 
 export type SignupState = { error?: string };
-const POLICY_VERSION = "v2"; // v2 (4 oct. 2026) : textes des cases et page confidentialité complétée
+const POLICY_VERSION = "v3"; // v3 (23 oct. 2026) : plus de date de naissance demandée (page confidentialité mise à jour)
 
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {
@@ -29,7 +29,6 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
       .slice(0, 120) || null;
   const phoneRaw = String(fd.get("phone") ?? "").trim();
   const phone = phoneRaw ? normalizePhone(phoneRaw).slice(0, 20) : null;
-  const birthDate = String(fd.get("birth_date") ?? "") || null;
   const privacy = fd.get("privacy") === "on";
   const marketing = fd.get("marketing") === "on";
   const leaderboard = fd.get("leaderboard") === "on";
@@ -38,13 +37,6 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   if (!email && !phone) return { error: "Indique ton email ou ton téléphone." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "L'email ne semble pas valide." };
   if (phone && phone.replace(/\D/g, "").length < 9) return { error: "Le téléphone ne semble pas valide." };
-  if (birthDate) {
-    // La date doit exister (pas de 31 février)
-    const d = new Date(`${birthDate}T12:00:00Z`);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== birthDate) {
-      return { error: "Cette date d'anniversaire n'existe pas : vérifie le jour et le mois." };
-    }
-  }
   if (!privacy) return { error: "Coche la case pour confirmer que tu as lu comment tes données sont utilisées." };
 
   const supabase = createAdminClient();
@@ -109,7 +101,6 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
         last_name: lastName,
         email,
         phone,
-        birth_date: birthDate,
         marketing_optin: marketing,
         leaderboard_optin: leaderboard,
       })

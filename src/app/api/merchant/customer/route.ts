@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const [{ data: customer }, { data: cardRow }] = await Promise.all([
     supabase
       .from("customers")
-      .select("id, first_name, last_name, phone, email, birth_date, marketing_optin, created_at, last_visit_at")
+      .select("id, first_name, last_name, phone, email, marketing_optin, created_at, last_visit_at")
       .eq("id", id)
       .eq("business_id", session.businessId)
       .maybeSingle(),
@@ -84,11 +84,6 @@ export async function GET(request: Request) {
     history = rows.map((e) => mapEvent(e, canUndo.has(e.id)));
   }
 
-  // Date de naissance : seulement le jour et le mois (pour l'offre d'anniversaire)
-  const birthday = customer.birth_date
-    ? new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${customer.birth_date}T12:00:00Z`))
-    : null;
-
   return json({
     ok: true,
     customer: {
@@ -97,7 +92,6 @@ export async function GET(request: Request) {
       last_name: customer.last_name,
       phone: customer.phone,
       email: customer.email,
-      birthday,
       marketing_optin: customer.marketing_optin,
       created_at: customer.created_at,
       last_visit_at: customer.last_visit_at,

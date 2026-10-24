@@ -19,7 +19,7 @@ const UPDATES: { what: string; how: string; who: string }[] = [
   { what: "Record ⏱️", how: "Après la session, le commerçant tape le meilleur tour du client dans le scanner (ex. 38,412). S'il est meilleur que l'ancien, il remplace le record.", who: "Commerçant (saisie)" },
   { what: "Classement P1, P2…", how: "Recalculé automatiquement à chaque nouveau record, pour tous les pilotes. Ceux qui sont dépassés reçoivent une alerte.", who: "Automatique" },
   { what: "Notifications d'offres", how: "Toi (tableau de bord) ou le commerçant (onglet Notifications du scanner) : tout de suite, à une date, ou répétées. Limite par semaine.", who: "Toi / commerçant" },
-  { what: "Anniversaire, « tu nous manques »", how: "Offre ajoutée le jour de l'anniversaire ; message après 30 jours d'absence.", who: "Automatique (chaque jour)" },
+  { what: "« Tu nous manques »", how: "Message après 30 jours d'absence.", who: "Automatique (chaque jour)" },
 ];
 
 const SETTINGS: { where: string; items: string }[] = [
@@ -27,7 +27,7 @@ const SETTINGS: { where: string; items: string }[] = [
   { where: "Section 3 · Design", items: "Photo principale, couleurs, style de progression (verre, points, circuit néon), icônes, textes de la carte (ex. « SECTEURS », « PILOTE »)." },
   { where: "Section 4 · Niveaux", items: "Nom de chaque niveau, à partir de combien de passages ou d'€ dépensés, l'avantage, la couleur et la photo du niveau. Utilise les boutons de l'aperçu pour voir chaque niveau." },
   { where: "Section 5 · Boosters", items: "Bonus d'inscription, heures boostées (désactivées si « Désactivé »), série de la semaine, record + classement, parrainage." },
-  { where: "Section 6 · Offres", items: "Offre de bienvenue, offre d'anniversaire, nombre maximum de notifications par semaine." },
+  { where: "Section 6 · Offres", items: "Offre de bienvenue, nombre maximum de notifications par semaine." },
 ];
 
 const GLOSSARY: { term: string; def: string }[] = [

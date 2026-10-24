@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * Formule Walty du commerce (offre du 20 octobre 2026), table public.walty_plans (remplie depuis le CRM) :
  * - « tout-compris » (15 €/mois) : tout l'espace commerçant ;
- * - « essentiel » : la carte, le scanner, les clients, l'historique, Mon programme (sans anniversaire, parrainage,
+ * - « essentiel » : la carte, le scanner, les clients, l'historique, Mon programme (sans parrainage
  *   ni lien d'avis Google), SANS chiffres détaillés, messages ni offres ; 1 accès d'équipe prévu.
  * Pas de ligne pour le commerce = « tout-compris » (les commerces d'avant l'offre gardent tout).
  * Lecture avec la clé serveur (service role) : la table est fermée au public (RLS, admin via crm_is_admin()).

@@ -279,7 +279,6 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     tiers_enabled: tiersEnabled,
     tier_basis: tierBasis,
     welcome_offer: optional(fd, "welcome_offer"),
-    birthday_offer: optional(fd, "birthday_offer"),
     ...colors,
     decor_preset: slug(text(fd, "decor_preset")) || "none",
     progress_style: pick(text(fd, "progress_style"), ["glass", "minimal", "track", "grid", "collection", "fill", "none"] as const, "glass"),

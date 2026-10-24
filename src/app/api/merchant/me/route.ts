@@ -47,7 +47,7 @@ export async function GET(request: Request) {
     supabase.from("businesses").select("name, logo_url, max_notifications_per_week").eq("id", session.businessId).single(),
     supabase
       .from("loyalty_programs")
-      .select("name, mode, reward_threshold, reward_description, points_per_euro, cashback_percent, welcome_offer, birthday_offer, is_active")
+      .select("name, mode, reward_threshold, reward_description, points_per_euro, cashback_percent, welcome_offer, is_active")
       .eq("business_id", session.businessId)
       .maybeSingle(),
     getWaltyPlan(session.businessId),

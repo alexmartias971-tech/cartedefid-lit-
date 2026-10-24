@@ -102,11 +102,7 @@ export default function StepExtras({
           )}
         </div>
 
-        <More title="Encore plus d'idées" hint="Anniversaire, défi de la semaine, niveaux, classement… Utile surtout pour les clients très réguliers.">
-          <Field label="Offre d'anniversaire" htmlFor="wz-bday" hint={BONUS_HELP.birthday}>
-            <input id="wz-bday" className="wz-input" value={d.birthday_offer} onChange={(e) => set({ birthday_offer: e.target.value })} placeholder="Ex : 1 dessert offert pour ton anniversaire 🎂" />
-          </Field>
-
+        <More title="Encore plus d'idées" hint="Défi de la semaine, niveaux, classement… Utile surtout pour les clients très réguliers.">
           <div className="wz-row">
             <Toggle checked={d.streak_enabled} onChange={(on) => set({ streak_enabled: on })} label="Défi : venir chaque semaine" hint={BONUS_HELP.streak} />
             {d.streak_enabled && (

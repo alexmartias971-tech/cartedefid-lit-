@@ -74,7 +74,6 @@ export default function SignupView({
             businessName={business.name}
             referral={referral && /^[0-9A-Fa-f]{8}$/.test(referral) ? referral.toUpperCase() : null}
             leaderboard={program.lap_times_enabled}
-            birthday={!!program.birthday_offer}
           />
         </section>
       )}

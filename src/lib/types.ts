@@ -40,7 +40,6 @@ export type Program = {
   tiers_enabled: boolean;
   tier_basis: "visits" | "spend";
   welcome_offer: string | null;
-  birthday_offer: string | null;
   max_purchase_amount: number;
   decor_preset: string;
   progress_style: "glass" | "minimal" | "track" | "grid" | "collection" | "fill" | "none";
@@ -115,7 +114,6 @@ export type Customer = {
   last_name: string | null;
   email: string | null;
   phone: string | null;
-  birth_date: string | null;
   marketing_optin: boolean;
   leaderboard_optin: boolean;
   created_at: string;

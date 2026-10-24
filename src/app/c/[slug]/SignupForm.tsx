@@ -3,8 +3,6 @@
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import type { SignupState } from "./actions";
 
-const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
-
 /** La coche des cases (dessinée, pour une grosse case facile au doigt). */
 function Box() {
   return (
@@ -17,21 +15,18 @@ function Box() {
 }
 
 /**
- * Inscription en 20 secondes : prénom + téléphone (ou e-mail). Le nom n'est demandé que pour le classement,
- * l'anniversaire (jour + mois, sans l'année) seulement si le commerce offre un cadeau d'anniversaire.
+ * Inscription en 20 secondes : prénom + téléphone (ou e-mail). Le nom n'est demandé que pour le classement.
  */
 export default function SignupForm({
   action,
   businessName,
   referral,
   leaderboard,
-  birthday,
 }: {
   action: (prev: SignupState, fd: FormData) => Promise<SignupState>;
   businessName: string;
   referral?: string | null;
   leaderboard?: boolean;
-  birthday?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<SignupState, FormData>(action, {});
   const [byEmail, setByEmail] = useState(false);
@@ -43,11 +38,6 @@ export default function SignupForm({
   const [marketing, setMarketing] = useState(false);
   const [board, setBoard] = useState(false);
   const [privacy, setPrivacy] = useState(false);
-  const [day, setDay] = useState("");
-  const [month, setMonth] = useState("");
-  // Nombre de jours du mois choisi (2000 est bissextile : le 29 février reste possible)
-  const daysInMonth = month ? new Date(2000, Number(month), 0).getDate() : 31;
-  const birthDate = day && month && Number(day) <= daysInMonth ? `2000-${month.padStart(2, "0")}-${day.padStart(2, "0")}` : "";
 
   // Quand une erreur arrive, on la fait défiler à l'écran pour qu'elle soit vue
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -150,43 +140,6 @@ export default function SignupForm({
           <button type="button" className="wc-switch-link" onClick={() => setByEmail(false)}>
             Je préfère donner mon téléphone
           </button>
-        </div>
-      )}
-
-      {birthday && (
-        <div className="wc-field">
-          <span className="wc-label">
-            Ton anniversaire 🎂 <small>(facultatif, pour une surprise)</small>
-          </span>
-          <div className="wc-grid2">
-            <select aria-label="Jour" className="wc-input" value={day} required={!!month} onChange={(e) => setDay(e.target.value)}>
-              <option value="">Jour</option>
-              {Array.from({ length: daysInMonth }, (_, i) => (
-                <option key={i + 1} value={String(i + 1)}>
-                  {i + 1}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Mois"
-              className="wc-input"
-              value={month}
-              required={!!day}
-              onChange={(e) => {
-                const m = e.target.value;
-                setMonth(m);
-                if (m && Number(day) > new Date(2000, Number(m), 0).getDate()) setDay("");
-              }}
-            >
-              <option value="">Mois</option>
-              {MONTHS.map((m, i) => (
-                <option key={m} value={String(i + 1)}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-          {birthDate && <input type="hidden" name="birth_date" value={birthDate} />}
         </div>
       )}
 

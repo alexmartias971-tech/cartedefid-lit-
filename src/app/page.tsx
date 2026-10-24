@@ -5,7 +5,7 @@ const FEATURES = [
   { icon: "📱", title: "Apple Wallet & Google Wallet", text: "La carte vit dans le téléphone du client. Rien à télécharger, elle s'ajoute en un geste depuis un QR code." },
   { icon: "🎨", title: "Un design unique par commerce", text: "Vraies photos, couleurs de la marque, circuit néon, verre dépoli… La carte change même de photo à chaque niveau." },
   { icon: "🛡️", title: "Zéro triche", text: "Seul le commerçant ajoute les passages, depuis son scanner protégé par un code PIN. Limite par jour intégrée." },
-  { icon: "🔔", title: "Des notifications qui font revenir", text: "Offres programmées, anniversaire, « tu nous manques », rappel de série, carte qui s'affiche près du commerce." },
+  { icon: "🔔", title: "Des notifications qui font revenir", text: "Offres programmées, « tu nous manques », rappel de série, carte qui s'affiche près du commerce." },
   { icon: "🏆", title: "Niveaux, séries et classement", text: "Rookie → Légende, bonus quand on revient chaque semaine, records et classement pour les commerces sportifs." },
   { icon: "📊", title: "Un tableau de bord simple", text: "Clients, passages, récompenses, export, accès commerçant : tout est au même endroit." },
 ];

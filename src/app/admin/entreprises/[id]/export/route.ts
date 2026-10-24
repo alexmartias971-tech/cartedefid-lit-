@@ -13,7 +13,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { data } = await supabase
     .from("customers")
     .select(
-      "first_name, last_name, email, phone, birth_date, marketing_optin, created_at, last_visit_at, cards(stamps_count, points_balance, cashback_balance, lifetime_visits, lifetime_spent, rewards_redeemed, wallet_platform)",
+      "first_name, last_name, email, phone, marketing_optin, created_at, last_visit_at, cards(stamps_count, points_balance, cashback_balance, lifetime_visits, lifetime_spent, rewards_redeemed, wallet_platform)",
     )
     .eq("business_id", id)
     .order("created_at");
@@ -23,7 +23,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     last_name: string | null;
     email: string | null;
     phone: string | null;
-    birth_date: string | null;
     marketing_optin: boolean;
     created_at: string;
     last_visit_at: string | null;
@@ -42,7 +41,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     "Nom",
     "Email",
     "Téléphone",
-    "Naissance",
     "Accepte les offres",
     "Inscrit le",
     "Dernière visite",
@@ -60,8 +58,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       c.last_name,
       c.email,
       c.phone,
-      // Depuis l'inscription simplifiée, l'année n'est plus demandée (enregistrée en 2000) : on n'affiche que jour/mois
-      c.birth_date ? (c.birth_date.startsWith("2000-") ? `${c.birth_date.slice(8, 10)}/${c.birth_date.slice(5, 7)}` : c.birth_date) : null,
       c.marketing_optin ? "oui" : "non",
       c.created_at,
       c.last_visit_at,

@@ -9,13 +9,13 @@ import { getWaltyPlan, planRefused, type PlanId } from "@/lib/walty-plan";
 
 /**
  * « Mon programme » dans l'espace commerçant de walty.fr : les règles de la carte, à lire et à modifier.
- * - Modifiable par le commerçant : le cadeau, le nombre de passages, les gains par euro, les offres de bienvenue
- *   et d'anniversaire, les heures boostées, les bonus, le catalogue de cadeaux (sans suppression), ses coordonnées.
+ * - Modifiable par le commerçant : le cadeau, le nombre de passages, les gains par euro, l'offre de bienvenue,
+ *   les heures boostées, les bonus, le catalogue de cadeaux (sans suppression), ses coordonnées.
  * - Jamais ici (« Demander à Walty ») : le mode (tampons / points / cashback), le design, le nom de la carte,
  *   les niveaux, l'activation ou la pause de la carte, les suppressions.
  * - Les modifications demandent l'accès « gérant » (celui qui peut envoyer des messages) et une session active.
  * Mêmes vérifications que le tableau de bord admin ; les cartes des clients se mettent à jour ensuite.
- * - Formule Essentiel (voir src/lib/walty-plan.ts) : l'offre d'anniversaire, le bonus de parrainage et le lien d'avis Google
+ * - Formule Essentiel (voir src/lib/walty-plan.ts) : le bonus de parrainage et le lien d'avis Google
  *   ne se modifient pas ici (403 « Tout compris ») ; « plan » est renvoyé pour que walty.fr masque ces champs.
  */
 
@@ -71,7 +71,6 @@ function view(d: Loaded, session: MerchantSession, plan: PlanId, cards: CardsInf
       max_purchase_amount: Number(p.max_purchase_amount),
       max_stamps_per_day: p.max_stamps_per_day,
       welcome_offer: p.welcome_offer ?? "",
-      birthday_offer: p.birthday_offer ?? "",
       signup_bonus: p.signup_bonus ?? 0,
       referral_bonus: p.referral_bonus ?? 0,
       bonus_multiplier: p.bonus_multiplier ?? 1,
@@ -190,7 +189,6 @@ export async function POST(request: Request) {
 
   const programFields: Record<string, unknown> = {
     welcome_offer: has("welcome_offer") ? str(s.welcome_offer, 120) || null : p.welcome_offer,
-    birthday_offer: has("birthday_offer") ? str(s.birthday_offer, 120) || null : p.birthday_offer,
     max_stamps_per_day: maxStamps,
     // En mode tampons, le bonus d'inscription ne peut pas offrir le cadeau directement
     signup_bonus: mode === "stamps" ? Math.min(signupBonus, Math.max(0, threshold - 1)) : mode === "points" ? signupBonus : 0,
@@ -224,10 +222,9 @@ export async function POST(request: Request) {
     businessFields[key] = url;
   }
 
-  // Formule Essentiel : anniversaire, parrainage et lien d'avis Google restent tels quels (Tout compris seulement)
+  // Formule Essentiel : parrainage et lien d'avis Google restent tels quels (Tout compris seulement)
   if (plan === "essentiel") {
     const changed =
-      (has("birthday_offer") && (programFields.birthday_offer ?? null) !== (p.birthday_offer ?? null)) ||
       (has("referral_bonus") && programFields.referral_bonus !== (p.referral_bonus ?? 0)) ||
       (bHas("google_review_url") && (businessFields.google_review_url ?? null) !== (safeUrl(b.google_review_url) || null));
     if (changed) return planRefused();

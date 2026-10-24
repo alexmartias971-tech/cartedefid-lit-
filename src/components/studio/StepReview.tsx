@@ -48,7 +48,6 @@ export default function StepReview({
           bonus_start_hour: d.bonus_multiplier > 1 ? d.bonus_start_hour : null,
           bonus_end_hour: d.bonus_multiplier > 1 ? d.bonus_end_hour : null,
           welcome_offer: d.welcome_offer.trim() || null,
-          birthday_offer: d.birthday_offer.trim() || null,
         },
         d.tiers.filter((t) => t.name.trim()).map((t) => ({ name: t.name, min_value: Number(t.min_value) || 0, perk: t.perk || null })),
       ),

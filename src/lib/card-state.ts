@@ -691,7 +691,7 @@ export function describeProgram(
     | "mode" | "reward_threshold" | "reward_description" | "points_per_euro" | "cashback_percent" | "tiers_enabled" | "tier_basis"
     | "progress_style" | "max_stamps_per_day" | "signup_bonus" | "streak_enabled" | "streak_goal" | "streak_bonus"
     | "streak_reminder_dow" | "streak_reminder_hour" | "lap_times_enabled" | "referral_bonus" | "bonus_multiplier"
-    | "bonus_start_hour" | "bonus_end_hour" | "welcome_offer" | "birthday_offer"
+    | "bonus_start_hour" | "bonus_end_hour" | "welcome_offer"
   >,
   tiers: Pick<Tier, "name" | "min_value" | "perk">[] = [],
 ): { icon: string; title: string; text: string }[] {
@@ -770,6 +770,5 @@ export function describeProgram(
     out.push({ icon: "⚡", title: "Heures boostées", text: `Tes gains sont multipliés par ${program.bonus_multiplier} de ${program.bonus_start_hour} h à ${program.bonus_end_hour} h.` });
   }
   if (program.welcome_offer) out.push({ icon: "👋", title: "Bienvenue", text: program.welcome_offer });
-  if (program.birthday_offer) out.push({ icon: "🎂", title: "Anniversaire", text: program.birthday_offer });
   return out;
 }
