@@ -4,7 +4,7 @@
  * toutes les versions de la carte disent exactement la même chose.
  */
 import { buildStripSvg, STRIP_H, STRIP_W, type StripOptions } from "@/lib/art";
-import { buildBannerSvg, buildPosterSvg, FORMATS, LINE_ICONS, layersSvg, type BannerFormat, type BannerOptions, type BannerStyle, type LogoArt } from "@/lib/visual";
+import { buildBannerSvg, buildPosterSvg, FORMATS, LINE_ICONS, layersSvg, type BannerFormat, type BannerOptions, type BannerStyle, type LogoArt, type StampArt } from "@/lib/visual";
 import { parseLayout, type ArtFormat, type CardLayout, type FieldSlot, type SlotConfig } from "@/lib/layout";
 import type { CatalogReward, Coupon, Program, RewardMode, Tier } from "@/lib/types";
 
@@ -420,7 +420,14 @@ export function isPhotoStyle(style: CardDesign["progressStyle"]) {
 type Progress = { total: number; filled: number; streak?: { count: number; goal: number } | null };
 
 /** Images déjà prêtes pour le dessin : le logo (avec son format) et le format de la photo de fond. */
-export type ArtAssets = { logo?: LogoArt | null; photoRatio?: number | null };
+export type ArtAssets = { logo?: LogoArt | null; photoRatio?: number | null; stampArt?: StampArt | null };
+
+/** Tampons dessinés : images déjà converties (serveur), sinon les adresses enregistrées (aperçu dans le navigateur). */
+function stampArtOf(design: CardDesign, icon?: string | null, iconEmpty?: string | null): StampArt | null {
+  const full = icon !== undefined ? icon : design.stampIconUrl;
+  const empty = iconEmpty !== undefined ? iconEmpty : design.stampEmptyIconUrl;
+  return full ? { full, empty: empty ?? null } : null;
+}
 
 /** Options du moteur photo à partir du design (et d'une photo déjà convertie côté serveur). */
 /** Carte pas encore enregistrée avec l'éditeur v2 (le bandeau Google garde alors l'ancien format 3:1). */
@@ -476,6 +483,7 @@ export function bannerOptions(
     logo: assets.logo ?? null,
     crop: design.layout?.crop?.[format] ?? null,
     photoRatio: assets.photoRatio ?? null,
+    stampArt: assets.stampArt !== undefined ? assets.stampArt : stampArtOf(design),
   };
 }
 
@@ -492,7 +500,7 @@ export function cardBannerSvg(
   uid: string,
   hrefs?: { decor?: string | null; icon?: string | null; iconEmpty?: string | null } & ArtAssets,
 ): string {
-  const assets: ArtAssets = { logo: hrefs?.logo, photoRatio: hrefs?.photoRatio };
+  const assets: ArtAssets = { logo: hrefs?.logo, photoRatio: hrefs?.photoRatio, stampArt: stampArtOf(design, hrefs?.icon, hrefs?.iconEmpty) };
   if (isPhotoStyle(design.progressStyle) || design.mode === "cashback" || design.progressStyle === "none") {
     return buildBannerSvg(bannerOptions(design, progress, hrefs?.decor, format, assets), format, width, height, uid);
   }

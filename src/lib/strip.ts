@@ -157,10 +157,16 @@ export async function renderCardPoster(bundle: CardBundle, scale: 1 | 2 | 3 = 3)
   const { state, program, progress } = stateOf(bundle);
   const design = designFromProgram(program);
   if (state.tier?.image_url) design.layout = { ...design.layout, crop: undefined };
-  const [photo, logo] = await Promise.all([embed(photoFor(program, state.tier, "poster"), 1600), logoArt(program, bundle.business.logo_url)]);
+  const [photo, logo, icon, iconEmpty] = await Promise.all([
+    embed(photoFor(program, state.tier, "poster"), 1600),
+    logoArt(program, bundle.business.logo_url),
+    embed(design.stampIconUrl, 300),
+    embed(design.stampEmptyIconUrl, 300),
+  ]);
+  const stampArt = icon ? { full: icon.uri, empty: iconEmpty?.uri ?? null } : null;
   const { w, h } = FORMATS.poster;
   return svgToPng(
-    cardPosterSvg(design, w * scale, h * scale, "p", photo?.uri ?? null, progress, { logo, photoRatio: photo?.ratio ?? null }),
+    cardPosterSvg(design, w * scale, h * scale, "p", photo?.uri ?? null, progress, { logo, photoRatio: photo?.ratio ?? null, stampArt }),
     w * scale,
     h * scale,
   );

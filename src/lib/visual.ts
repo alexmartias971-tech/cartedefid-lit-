@@ -111,7 +111,14 @@ export type BannerOptions = {
   fill?: Fill;
   /** Mode points : une jauge continue jusqu'au prochain cadeau (au lieu de cases). */
   gauge?: boolean;
+  /**
+   * Tampons dessinés par le commerce (PNG transparents carrés, colonnes stamp_icon_url / stamp_empty_icon_url).
+   * Ils remplacent les icônes au trait de l'aspect « icônes » ; la case cadeau reste la case cadeau.
+   */
+  stampArt?: StampArt | null;
 };
+
+export type StampArt = { full: string; empty?: string | null };
 
 export type LogoArt = { href: string; ratio: number };
 /** Ce dont les calques ont besoin en plus de la disposition (le logo du commerce). */
@@ -270,6 +277,7 @@ function glassBand(o: BannerOptions, W: number, H: number, top?: number): string
     const isGift = o.rewardOnLast && i === total - 1;
     const id = isGift ? "gift" : o.icons.length > 0 ? o.icons[i % o.icons.length] : "check";
     const s = r * 1.12;
+    if (!isGift && look === "icons" && o.stampArt?.full) return artStamp(cx, cy, r, filled, o.stampArt);
     if (!isGift && look === "classic") return classicStamp(cx, cy, r, i, filled, o.accent);
     if (!isGift && logoOk) {
       defs.push(`<clipPath id="lc${i}"><circle cx="${cx}" cy="${cy}" r="${r * 0.88}"/></clipPath>`);
@@ -303,6 +311,18 @@ function classicStamp(cx: number, cy: number, r: number, i: number, filled: bool
   }
   const tilt = [-14, 9, -6, 13, -10, 5, -3, 11][i % 8];
   return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${accent}"/><g transform="rotate(${tilt} ${cx} ${cy})">${icon("check", cx, cy, r * 1.15, inkOn(accent), 1, 2.6)}</g>`;
+}
+
+/**
+ * Tampon dessiné (image du commerce) : l'image « gagné » ; case vide = l'image « vide »,
+ * ou à défaut l'image « gagné » en transparence. L'image porte sa propre forme (pas de rond derrière) :
+ * elle prend toute la case, un peu plus large que le rond des autres tampons.
+ */
+function artStamp(cx: number, cy: number, r: number, filled: boolean, art: StampArt): string {
+  const s = r * 2.36;
+  const href = filled ? art.full : (art.empty || art.full);
+  const dim = !filled && !art.empty ? ' opacity=".32"' : "";
+  return `<image href="${esc(href)}" x="${(cx - s / 2).toFixed(2)}" y="${(cy - s / 2).toFixed(2)}" width="${s.toFixed(2)}" height="${s.toFixed(2)}" preserveAspectRatio="xMidYMid meet"${dim}/>`;
 }
 
 /** Tampon « logo » : le logo du commerce dans un rond blanc ; case vide = le logo en transparence. */
