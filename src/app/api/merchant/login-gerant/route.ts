@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { rememberDevice } from "@/lib/merchant-device";
 import { startManagerSession } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -59,5 +60,7 @@ export async function POST(request: Request) {
   if (!account) return fail("Erreur serveur, réessayez.", 500);
 
   await startManagerSession(result.scanner_id, account.id);
+  // Cet appareil reste connecté 90 jours, avec la preuve « gérant » (voir src/lib/merchant-device.ts)
+  await rememberDevice(result.scanner_id, account.id);
   return NextResponse.json({ ok: true, role: "gerant", mustChangePassword: !!result.must_change_password }, { headers: NO_STORE });
 }

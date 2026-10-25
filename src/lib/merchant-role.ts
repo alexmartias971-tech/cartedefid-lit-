@@ -41,8 +41,8 @@ function safeEqual(a: string, b: string) {
  * Ouvre la session après un bon mot de passe : le badge habituel (même format que startMerchantSession)
  * ET le cookie « gérant » qui lui est lié.
  */
-export async function startManagerSession(scannerId: string, loginId: string) {
-  const expires = Date.now() + DURATION_HOURS * 3600 * 1000;
+export async function startManagerSession(scannerId: string, loginId: string, issuedAt = Date.now()) {
+  const expires = issuedAt + DURATION_HOURS * 3600 * 1000;
   const payload = `${scannerId}.${expires}`;
   const sessionValue = `${payload}.${hmac(payload)}`;
   const options = {

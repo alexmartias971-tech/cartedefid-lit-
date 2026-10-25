@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { rememberDevice } from "@/lib/merchant-device";
 import { startMerchantSession } from "@/lib/merchant-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -14,5 +15,7 @@ export async function POST(request: Request) {
   if (!result.ok || !result.scanner_id) return NextResponse.json({ ok: false, error: result.error }, { status: 401 });
 
   await startMerchantSession(result.scanner_id);
+  // Cet appareil reste connecté 90 jours (Walty Caisse) : voir src/lib/merchant-device.ts
+  await rememberDevice(result.scanner_id, null);
   return NextResponse.json({ ok: true });
 }

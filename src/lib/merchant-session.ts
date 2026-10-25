@@ -12,9 +12,12 @@ function sign(payload: string) {
   return crypto.createHmac("sha256", requireEnv("MERCHANT_SESSION_SECRET")).update(payload).digest("base64url");
 }
 
-/** Crée le "badge" de connexion du commerçant après un bon code PIN (valable 12 h). */
-export async function startMerchantSession(scannerId: string) {
-  const expires = Date.now() + DURATION_HOURS * 3600 * 1000;
+/**
+ * Crée le "badge" de connexion du commerçant après un bon code PIN (valable 12 h).
+ * issuedAt : moment d'émission (par défaut maintenant ; voir merchant-device.ts).
+ */
+export async function startMerchantSession(scannerId: string, issuedAt = Date.now()) {
+  const expires = issuedAt + DURATION_HOURS * 3600 * 1000;
   const payload = `${scannerId}.${expires}`;
   const store = await cookies();
   store.set(COOKIE, `${payload}.${sign(payload)}`, {
@@ -43,7 +46,7 @@ export type MerchantSession = {
  * Lit le badge SANS base de données : signature et date d'expiration.
  * Renvoie l'identifiant de l'accès si le badge est authentique et pas expiré, sinon null.
  */
-export function readSessionCookie(raw: string | undefined | null): { scannerId: string } | null {
+export function readSessionCookie(raw: string | undefined | null): { scannerId: string; expires: number } | null {
   if (!raw) return null;
   const parts = raw.split(".");
   if (parts.length !== 3) return null;
@@ -53,18 +56,29 @@ export function readSessionCookie(raw: string | undefined | null): { scannerId: 
     return null;
   }
   if (!(Number(expires) >= Date.now())) return null;
-  return { scannerId };
+  return { scannerId, expires: Number(expires) };
 }
 
-/** L'accès est-il toujours actif (et son commerce actif) ? Une seule lecture, colonnes utiles seulement. */
-async function loadSession(scannerId: string): Promise<MerchantSession | null> {
-  const { data } = await createAdminClient()
-    .from("scanner_access")
-    .select("id, business_id, access_token, is_active, can_send_notifications, label, businesses(status)")
-    .eq("id", scannerId)
-    .maybeSingle();
+/**
+ * L'accès est-il toujours actif (et son commerce actif) ? Une seule lecture, colonnes utiles seulement.
+ * En même temps (sans attente de plus) : « Déconnecter tous les appareils » (merchant_device_revocations) ;
+ * un badge émis AVANT cette déconnexion générale est refusé tout de suite.
+ */
+async function loadSession(scannerId: string, issuedAt: number): Promise<MerchantSession | null> {
+  const supabase = createAdminClient();
+  const [{ data }, revoked] = await Promise.all([
+    supabase
+      .from("scanner_access")
+      .select("id, business_id, access_token, is_active, can_send_notifications, label, businesses(status)")
+      .eq("id", scannerId)
+      .maybeSingle(),
+    supabase.from("merchant_device_revocations").select("devices_revoked_at").eq("scanner_access_id", scannerId).maybeSingle(),
+  ]);
   const business = data?.businesses as unknown as { status: string } | null;
   if (!data || !data.is_active || business?.status !== "active") return null;
+  if (revoked.error) console.error("[session] déconnexion générale illisible :", revoked.error.message);
+  const revokedAt = Date.parse((revoked.data as { devices_revoked_at?: string } | null)?.devices_revoked_at ?? "");
+  if (Number.isFinite(revokedAt) && issuedAt <= revokedAt) return null;
   return {
     scannerId: data.id,
     businessId: data.business_id,
@@ -84,5 +98,6 @@ export async function getMerchantSession(): Promise<MerchantSession | null> {
   const raw = store.get(COOKIE)?.value;
   const parsed = readSessionCookie(raw);
   if (!parsed) return null;
-  return perRequest(store, `session:${raw}`, () => loadSession(parsed.scannerId));
+  // le badge dure 12 h : il a été émis 12 h avant son expiration
+  return perRequest(store, `session:${raw}`, () => loadSession(parsed.scannerId, parsed.expires - DURATION_HOURS * 3600 * 1000));
 }

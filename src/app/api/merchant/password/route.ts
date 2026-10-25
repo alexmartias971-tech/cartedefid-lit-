@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { currentLoginId, refreshDeviceFingerprint } from "@/lib/merchant-device";
 import { getMerchantRole } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -59,5 +60,7 @@ export async function POST(request: Request) {
   if (!result?.ok) {
     return fail(result?.error || "Mot de passe non modifié.", result?.no_account ? 404 : 400, result?.no_account ? { noAccount: true } : {});
   }
+  // Walty Caisse : CET appareil mémorisé suit le nouveau mot de passe (les autres appareils du gérant devront se reconnecter)
+  await refreshDeviceFingerprint(session.scannerId, await currentLoginId());
   return NextResponse.json({ ok: true }, { headers: NO_STORE });
 }
