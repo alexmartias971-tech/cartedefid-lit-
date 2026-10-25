@@ -9,6 +9,7 @@
  *  - `crop`   : cadrage de la photo pour chaque téléphone (point visé + zoom).
  *  - `look`   : aspect des tampons (tampon classique, logo du commerce, icônes).
  *  - `topLogo`: petit logo officiel en haut de la carte (false = masqué).
+ *  - `flat`   : visuels déjà finis aux couleurs de la carte (true = aucun voile ni fondu sombre ajouté par-dessus).
  *
  * Une carte sans disposition enregistrée garde exactement l'affichage d'avant.
  * Fichier sans dépendance : utilisé par l'éditeur (navigateur) et par la fabrication des cartes (serveur).
@@ -96,6 +97,8 @@ export type CardLayout = {
   trade?: string;
   /** Fond sans photo (absent = l'ancien dégradé simple). */
   fill?: Fill;
+  /** Visuels finis, à la couleur exacte de la carte : pas de voile en haut, de dégradé sombre ni de fondu par-dessus. */
+  flat?: boolean;
 };
 
 export const EMPTY_LAYOUT: CardLayout = { layers: [] };
@@ -284,6 +287,7 @@ export function parseLayout(raw: unknown, iconIds?: Set<string>): CardLayout {
   if (STAMP_LOOKS.includes(o.look as StampLook)) out.look = o.look as StampLook;
   if (o.topLogo === false) out.topLogo = false;
   if (FILLS.includes(o.fill as Fill)) out.fill = o.fill as Fill;
+  if (o.flat === true) out.flat = true;
   const trade = str(o.trade, 20).replace(/[^a-z]/g, "");
   if (trade) out.trade = trade;
   return out;

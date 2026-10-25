@@ -116,6 +116,8 @@ export type BannerOptions = {
    * Ils remplacent les icônes au trait de l'aspect « icônes » ; la case cadeau reste la case cadeau.
    */
   stampArt?: StampArt | null;
+  /** Visuels finis à la couleur de la carte (card_layout.flat) : aucun voile, dégradé sombre ni fondu par-dessus. */
+  flat?: boolean;
 };
 
 export type StampArt = { full: string; empty?: string | null };
@@ -212,9 +214,9 @@ export function inkOn(hex: string): string {
   return lum > 0.62 ? "#1a1320" : "#ffffff";
 }
 
-/** Position de la jauge de points (mode points). */
-function gaugeGeom(o: Pick<BannerOptions, "stampsY">, W: number, H: number, top?: number) {
-  const bandW = Math.min(W - 40, 330);
+/** Position de la jauge de points (mode points). visibleW = largeur vraiment visible (poster : côtés rognés par l'iPhone). */
+function gaugeGeom(o: Pick<BannerOptions, "stampsY">, W: number, H: number, top?: number, visibleW = W) {
+  const bandW = Math.min(visibleW - 40, 330);
   const bandH = 34;
   const bx = (W - bandW) / 2;
   const by =
@@ -223,8 +225,8 @@ function gaugeGeom(o: Pick<BannerOptions, "stampsY">, W: number, H: number, top?
 }
 
 /** Jauge de points : une barre qui se remplit jusqu'au prochain cadeau (pas de cases à cocher). */
-function pointsGauge(o: BannerOptions, W: number, H: number, top?: number): string {
-  const g = gaugeGeom(o, W, H, top);
+function pointsGauge(o: BannerOptions, W: number, H: number, top?: number, visibleW = W): string {
+  const g = gaugeGeom(o, W, H, top, visibleW);
   const ratio = Math.max(0, Math.min(1, o.total > 0 ? o.filled / o.total : 0));
   const r = g.h / 2;
   const giftR = r - 4;
@@ -243,13 +245,16 @@ function pointsGauge(o: BannerOptions, W: number, H: number, top?: number): stri
   return `${glass}${track}${fill}${gift}`;
 }
 
-/** Bandeau de tampons en « verre dépoli » posé sur la photo. */
-function glassBand(o: BannerOptions, W: number, H: number, top?: number): string {
-  if (o.gauge) return pointsGauge(o, W, H, top);
+/**
+ * Bandeau de tampons en « verre dépoli » posé sur la photo, centré.
+ * visibleW = largeur vraiment visible : sur le poster, l'iPhone rogne les côtés, la bande doit tenir dans ce qui reste.
+ */
+function glassBand(o: BannerOptions, W: number, H: number, top?: number, visibleW = W): string {
+  if (o.gauge) return pointsGauge(o, W, H, top, visibleW);
   const total = Math.max(1, Math.min(20, o.total));
   const rows = total > 12 ? 2 : 1;
   const perRow = Math.ceil(total / rows);
-  const cell = Math.min(31, (W - 44) / perRow);
+  const cell = Math.min(31, (visibleW - 44) / perRow);
   const r = cell * 0.4;
   const bandW = perRow * cell + 18;
   const bandH = rows * cell + 12;
@@ -501,7 +506,7 @@ function prefixIds(svg: string, uid: string) {
 export function buildBannerSvg(o: BannerOptions, format: BannerFormat, width?: number, height?: number, uid = "b"): string {
   const { w: W, h: H } = FORMATS[format];
   const scrim =
-    o.photo && o.style !== "none"
+    o.photo && o.style !== "none" && !o.flat
       ? `<defs><linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1"><stop offset=".35" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".42"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#scrim)"/>`
       : "";
   const progress =
@@ -519,9 +524,15 @@ export function buildBannerSvg(o: BannerOptions, format: BannerFormat, width?: n
 }
 
 /**
+ * L'iPhone agrandit l'image du poster (358 × 448) pour remplir sa carte (358 × 494) : il en rogne les côtés.
+ * Largeur vraiment visible de l'image, en points du poster (≈ 324,7).
+ */
+const POSTER_VISIBLE_W = (FORMATS.poster.w * FORMATS.poster.h) / 494;
+
+/**
  * Visuel plein format de la carte « poster » (iOS 27) : la photo occupe toute la carte,
  * avec un léger voile en haut (logo) et un fondu vers la couleur de marque en bas
- * (là où l'iPhone affiche les champs et le QR code).
+ * (là où l'iPhone affiche les champs et le QR code). Visuels finis (flat) : ni voile ni fondu.
  */
 export function buildPosterSvg(
   o: Pick<BannerOptions, "photo" | "focus" | "brand" | "darken"> & Partial<BannerOptions>,
@@ -534,7 +545,7 @@ export function buildPosterSvg(
   const stamps =
     o.style && o.style !== "none" && o.total
       ? o.style === "glass"
-        ? glassBand(o as BannerOptions, W, H, 58)
+        ? glassBand(o as BannerOptions, W, H, 58, POSTER_VISIBLE_W)
         : o.style === "track"
           ? // Marges de sécurité : l'iPhone agrandit l'image et rogne un peu les côtés ; le QR code arrive vers y = 225.
             trackLayer(o as BannerOptions, { x: 24, y: 36, w: W - 48, h: 168 })
@@ -550,8 +561,8 @@ export function buildPosterSvg(
         <stop offset="1" stop-color="${mix(o.brand, "#000000", 0.2)}" stop-opacity=".97"/>
       </linearGradient>
     </defs>
-    <rect width="${W}" height="${H * 0.26}" fill="url(#top)"/>
-    <rect y="${H * 0.58}" width="${W}" height="${H * 0.42}" fill="url(#bottom)"/>
+    ${o.flat ? "" : `<rect width="${W}" height="${H * 0.26}" fill="url(#top)"/>
+    <rect y="${H * 0.58}" width="${W}" height="${H * 0.42}" fill="url(#bottom)"/>`}
     ${stamps}
     ${layersSvg(o.layers, "poster", W, H, { logo: o.logo, uid })}
   </svg>`;
@@ -613,7 +624,9 @@ export function layersSvg(layers: ArtLayer[] | undefined, format: ArtFormat, W: 
 export function stampsBox(o: BannerOptions, format: ArtFormat): { x: number; y: number; w: number; h: number } | null {
   const { w: W, h: H } = FORMATS[format];
   if (!o.total || o.style === "none" || o.style === "track") return null;
-  if (o.gauge && o.style === "glass") return gaugeGeom(o, W, H, format === "poster" ? 58 : undefined);
+  // même largeur que le dessin : sur le poster, la bande tient dans la partie visible
+  const visibleW = format === "poster" ? POSTER_VISIBLE_W : W;
+  if (o.gauge && o.style === "glass") return gaugeGeom(o, W, H, format === "poster" ? 58 : undefined, visibleW);
   if (o.style === "minimal") {
     const total = Math.max(1, Math.min(30, o.total));
     const gap = Math.min(15, (W - 40) / total);
@@ -623,7 +636,7 @@ export function stampsBox(o: BannerOptions, format: ArtFormat): { x: number; y: 
   const total = Math.max(1, Math.min(20, o.total));
   const rows = total > 12 ? 2 : 1;
   const perRow = Math.ceil(total / rows);
-  const cell = Math.min(31, (W - 44) / perRow);
+  const cell = Math.min(31, (visibleW - 44) / perRow);
   const bandW = perRow * cell + 18;
   const bandH = rows * cell + 12;
   const top = format === "poster" ? 58 : undefined;

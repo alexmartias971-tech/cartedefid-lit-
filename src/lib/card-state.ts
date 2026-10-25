@@ -484,6 +484,7 @@ export function bannerOptions(
     crop: design.layout?.crop?.[format] ?? null,
     photoRatio: assets.photoRatio ?? null,
     stampArt: assets.stampArt !== undefined ? assets.stampArt : stampArtOf(design),
+    flat: design.layout?.flat === true,
   };
 }
 
