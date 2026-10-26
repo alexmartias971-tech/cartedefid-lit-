@@ -19,7 +19,7 @@ export default function Confidentialite() {
 
       <h2 className="text-xl font-semibold">Quelles données ?</h2>
       <p>
-        Prénom, nom (facultatif), email et/ou téléphone, tampons, points ou cashback, dates de passage,
+        Prénom, nom, email et/ou téléphone, tampons, points ou cashback, dates de passage,
         tes choix (offres, classement s’il y en a un) et un identifiant technique de la carte fourni par
         Apple ou Google. Ta position n’est jamais collectée.
       </p>

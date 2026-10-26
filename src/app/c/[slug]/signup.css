@@ -145,6 +145,9 @@
 /* Champs */
 .ws-form { display: grid; gap: 18px; }
 .ws-field { display: grid; gap: 7px; min-width: 0; }
+/* Prénom et nom côte à côte (l'un sous l'autre sur un très petit écran) */
+.ws-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 340px) { .ws-row2 { grid-template-columns: 1fr; } }
 .ws-label { font-size: 15px; font-weight: 700; color: var(--ws-sheet-ink); }
 .ws-label small { font-size: 13.5px; font-weight: 600; color: var(--ws-sheet-muted); }
 .ws-input {

@@ -15,7 +15,8 @@ function Box() {
 }
 
 /**
- * Inscription en 20 secondes : prénom + téléphone (ou e-mail). Le nom n'est demandé que pour le classement.
+ * Inscription en 20 secondes : prénom, nom (demande d'Alexandre, 25 oct. 2026 : le commerçant a l'identité complète de son client)
+ * et téléphone (ou e-mail). Une faute de frappe se corrige ensuite sur la page de la carte (« Mon prénom et mon nom »).
  */
 export default function SignupForm({
   action,
@@ -70,41 +71,45 @@ export default function SignupForm({
         <input id="site_web" name="site_web" tabIndex={-1} autoComplete="off" />
       </div>
 
-      <div className="ws-field">
-        <label htmlFor="first_name" className="ws-label">
-          Ton prénom
-        </label>
-        <input
-          ref={prenomRef}
-          id="first_name"
-          name="first_name"
-          required
-          autoComplete="given-name"
-          autoCapitalize="words"
-          enterKeyHint="next"
-          className="ws-input"
-          placeholder="Ex. : Léa"
-          value={firstName}
-          onChange={(e) => setFirstName(e.target.value)}
-        />
-      </div>
-
-      {leaderboard && (
+      <div className="ws-row2">
+        <div className="ws-field">
+          <label htmlFor="first_name" className="ws-label">
+            Ton prénom
+          </label>
+          <input
+            ref={prenomRef}
+            id="first_name"
+            name="first_name"
+            required
+            maxLength={60}
+            autoComplete="given-name"
+            autoCapitalize="words"
+            enterKeyHint="next"
+            className="ws-input"
+            placeholder="Ex. : Léa"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+          />
+        </div>
         <div className="ws-field">
           <label htmlFor="last_name" className="ws-label">
-            Ton nom <small>(pour le classement)</small>
+            Ton nom
           </label>
           <input
             id="last_name"
             name="last_name"
+            required
+            maxLength={60}
             autoComplete="family-name"
             autoCapitalize="words"
+            enterKeyHint="next"
             className="ws-input"
+            placeholder="Ex. : Martin"
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
           />
         </div>
-      )}
+      </div>
 
       {!byEmail ? (
         <div className="ws-field">

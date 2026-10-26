@@ -12,7 +12,8 @@ import { warmCard } from "@/lib/wallet-warm";
  * ne correspond pas ; on l'aide à la retrouver (indice du prénom enregistré : première et dernière lettre, nombre de lettres).
  */
 export type SignupState = { error?: string; retrouver?: { indice: string; lettres: number } };
-const POLICY_VERSION = "v3"; // v3 (23 oct. 2026) : plus de date de naissance demandée (page confidentialité mise à jour)
+// v4 (25 oct. 2026) : le nom est demandé avec le prénom ; v3 (23 oct.) : plus de date de naissance (page confidentialité à jour)
+const POLICY_VERSION = "v4";
 
 /** Prénom sans accents, majuscules, espaces ni tirets : « Jean-Éric » → « jeaneric ». */
 const simple = (s: string | null | undefined) =>
@@ -74,6 +75,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const leaderboard = fd.get("leaderboard") === "on";
 
   if (!firstName) return { error: "Indique ton prénom." };
+  if (!lastName) return { error: "Indique ton nom." };
   if (!email && !phone) return { error: "Indique ton email ou ton téléphone." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "L'email ne semble pas valide." };
   if (phone && phone.replace(/\D/g, "").length < 9) return { error: "Le téléphone ne semble pas valide." };

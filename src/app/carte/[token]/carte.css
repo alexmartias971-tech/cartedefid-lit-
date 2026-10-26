@@ -172,3 +172,16 @@
   .ws .wk-panel { padding: 24px; }
   .ws .wk-gift { padding: 32px 28px 28px; }
 }
+
+/* ---------- Corriger son prénom ou son nom (MonNom.tsx) ---------- */
+.ws .wk-nom-lien {
+  justify-self: start; min-height: 44px; padding: 8px 0; margin: -2px 0 -8px;
+  border: 0; background: none; cursor: pointer; text-align: left;
+  color: var(--ws-ink-soft); font: inherit; font-size: 15px; font-weight: 700;
+  text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 4px;
+}
+.ws .wk-intro .wk-panel { margin-top: 10px; }
+.ws .wk-intro .wk-nom-fait { margin-top: 8px; }
+.ws .wk-nom-form { gap: 14px; }
+.ws .wk-details > p, .ws .wk-details > .wk-nom-fait, .ws .wk-details > .wk-nom-form { margin-top: 12px; }
+.ws .wk-nom-actuel { color: var(--ws-sheet-ink); }

@@ -10,6 +10,7 @@ import type { CardBundle, Program } from "@/lib/types";
 // Base commune avec la page d'inscription (fond, feuille, bouton, pied de page), puis ce qui est propre à la carte
 import "@/app/c/[slug]/signup.css";
 import "./carte.css";
+import MonNom from "./MonNom";
 
 /** Le logo du commerce, présenté selon son image (fond propre, détouré…), sans cadre blanc inutile. */
 function ShopLogo({ url, look, program, maxW, maxH }: { url: string; look: LogoLook | null; program: Program; maxW: number; maxH: number }) {
@@ -98,7 +99,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
  * L'affichage de la carte d'un client, aux couleurs du commerce (comme la page d'inscription), dans l'ordre où il en a besoin :
  *  1. son prénom + LE gros bouton Wallet de son téléphone (Apple sur iPhone, Google sur Android),
  *  2. sa carte (le design du commerce),
- *  3. le reste : carte web de secours, offres, niveaux, cadeaux, parrainage, avis.
+ *  3. le reste : carte web de secours, offres, niveaux, cadeaux, parrainage, avis, et « Mon prénom et mon nom » (corriger une faute).
  * Les couleurs viennent de la carte (lib/shop-theme.ts, contrastes vérifiés) : plus de thème Walty violet.
  */
 export default function CardView({
@@ -222,6 +223,8 @@ export default function CardView({
               )}
             </h1>
             <p className="wk-sentence">{state.sentence}</p>
+            {/* Juste après l'inscription (ou la carte retrouvée) : c'est là qu'on voit une faute dans son prénom */}
+            {(isNew || deja) && <MonNom token={token} prenom={customer.first_name} nom={customer.last_name} variante="lien" />}
           </div>
         )}
 
@@ -383,6 +386,8 @@ export default function CardView({
             )}
           </section>
         )}
+
+        <MonNom token={token} prenom={customer.first_name} nom={customer.last_name} variante="panneau" />
 
         <details className="wk-panel wk-details">
           <summary>Comment ça marche ?</summary>
