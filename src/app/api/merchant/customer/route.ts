@@ -1,5 +1,7 @@
+import QRCode from "qrcode";
 import { loadCardBundle } from "@/lib/cards";
 import { computeCardState } from "@/lib/card-state";
+import { publicUrl } from "@/lib/env";
 import { getMerchantSession } from "@/lib/merchant-session";
 import { EVENT_SELECT, expired, json, mapEvent, undoableIds, UUID, type EventRow } from "@/lib/merchant-space";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -55,7 +57,13 @@ export async function GET(request: Request) {
   if (bundle && bundle.program.business_id === session.businessId) {
     const { card: c, program, tiers, catalog, coupons } = bundle;
     const state = computeCardState(program, c, tiers, catalog);
+    // « Renvoyer sa carte » : le client a changé de téléphone, l'a supprimée ou ne se souvient plus de son prénom.
+    // Il scanne ce QR en caisse (ou reçoit le lien) : sa carte s'ouvre, avec tous ses tampons, prête à remettre dans le Wallet.
+    const lien = `${publicUrl()}/carte/${c.web_token}`;
+    const lienQr = await QRCode.toDataURL(lien, { width: 360, margin: 1 }).catch(() => null);
     card = {
+      lien,
+      lien_qr: lienQr,
       mode: program.mode,
       wallet: c.wallet_platform ? WALLETS[c.wallet_platform] ?? c.wallet_platform : "Pas encore ajoutée au téléphone",
       balance_label: state.balanceLabel,

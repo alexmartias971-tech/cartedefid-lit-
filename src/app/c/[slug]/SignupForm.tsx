@@ -41,8 +41,15 @@ export default function SignupForm({
 
   // Quand une erreur arrive, on la fait défiler à l'écran pour qu'elle soit vue
   const errorRef = useRef<HTMLParagraphElement>(null);
+  // Carte déjà existante, prénom différent : le prénom est sélectionné, prêt à être retapé avec l'indice
+  const prenomRef = useRef<HTMLInputElement>(null);
+  const aideRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (state.error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (state.retrouver) {
+      aideRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      prenomRef.current?.select();
+    }
   }, [state]);
 
   return (
@@ -68,6 +75,7 @@ export default function SignupForm({
           Ton prénom
         </label>
         <input
+          ref={prenomRef}
           id="first_name"
           name="first_name"
           required
@@ -173,6 +181,26 @@ export default function SignupForm({
           </span>
         </label>
       </div>
+
+      {state.retrouver && (
+        <div ref={aideRef} className="ws-alert ws-alert-found" role="status">
+          <svg className="ws-alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8 12.3l2.7 2.7L16 9.6" />
+          </svg>
+          <div className="ws-found">
+            <strong>Bonne nouvelle : tu as déjà ta carte {businessName}.</strong>
+            <span>
+              Pour la retrouver avec tous tes tampons, tape le prénom donné à l&apos;inscription : il ressemble à{" "}
+              <b className="ws-found-indice">{state.retrouver.indice}</b>
+              {state.retrouver.lettres > 0 && <> ({state.retrouver.lettres} lettres)</>}, puis appuie sur « Recevoir ma carte ».
+            </span>
+            <span className="ws-found-aide">
+              Tu ne t&apos;en souviens plus ? Donne ton numéro en caisse : l&apos;équipe te renvoie ta carte en un instant.
+            </span>
+          </div>
+        </div>
+      )}
 
       {state.error && (
         <p ref={errorRef} className="ws-alert ws-alert-error" role="alert">

@@ -207,6 +207,13 @@
 .ws-alert svg, .ws-alert-icon { width: 22px; height: 22px; margin-top: 0; }
 .ws-alert-error { background: #fdf1f0; border: 1.5px solid #efb1aa; color: #8a1a12; animation: ws-shake 0.4s var(--ws-ease); }
 .ws-alert-off { background: var(--ws-field); border: 1.5px solid var(--ws-hairline); color: var(--ws-sheet-ink); }
+/* Carte déjà existante : une aide, pas une erreur (vert doux, lisible quelle que soit la couleur du commerce) */
+.ws-alert-found { background: #eef8f0; border: 1.5px solid #a9d8b3; color: #1d4d29; }
+.ws-found { display: grid; gap: 6px; }
+.ws-found strong { font-weight: 800; }
+.ws-found span { font-weight: 600; }
+.ws-found-indice { font-size: 17px; font-weight: 800; letter-spacing: 0.08em; white-space: nowrap; }
+.ws-found-aide { font-size: 13.5px; font-weight: 600; opacity: 0.85; }
 
 /* Le bouton : couleur de la carte, texte lisible dessus */
 .ws-btn {

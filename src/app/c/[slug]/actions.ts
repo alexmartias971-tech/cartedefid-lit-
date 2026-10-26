@@ -7,8 +7,48 @@ import { normalizePhone, phoneVariants } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { warmCard } from "@/lib/wallet-warm";
 
-export type SignupState = { error?: string };
+/**
+ * error : un message à corriger. retrouver : ce client a déjà une carte (même téléphone ou e-mail) mais le prénom tapé
+ * ne correspond pas ; on l'aide à la retrouver (indice du prénom enregistré : première et dernière lettre, nombre de lettres).
+ */
+export type SignupState = { error?: string; retrouver?: { indice: string; lettres: number } };
 const POLICY_VERSION = "v3"; // v3 (23 oct. 2026) : plus de date de naissance demandée (page confidentialité mise à jour)
+
+/** Prénom sans accents, majuscules, espaces ni tirets : « Jean-Éric » → « jeaneric ». */
+const simple = (s: string | null | undefined) =>
+  (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+
+/** Nombre de lettres à changer pour passer d'un mot à l'autre (Levenshtein ; les prénoms sont courts). */
+function ecart(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Le prénom tapé est-il celui de l'inscription ? « Alex » retrouve « Alexandre » (début), et une faute de frappe est
+ * tolérée, deux pour un prénom de 6 lettres ou plus : « Alexandre » retrouve « Alecandre ».
+ */
+function memePrenom(tape: string, connu: string): boolean {
+  if (!tape || !connu) return false;
+  if (tape === connu) return true;
+  if (tape.length >= 3 && connu.length >= 3 && (connu.startsWith(tape) || tape.startsWith(connu))) return true;
+  const court = Math.min(tape.length, connu.length);
+  return court >= 3 && ecart(tape, connu) <= (court >= 6 ? 2 : 1);
+}
+
+/** Indice du prénom enregistré, sans le dévoiler : « Alecandre » → « A•••••••e ». */
+function indicePrenom(prenom: string | null | undefined): { indice: string; lettres: number } {
+  const lettres = [...(prenom ?? "").trim()].filter((c) => /\p{L}/u.test(c));
+  if (lettres.length === 0) return { indice: "•••", lettres: 0 };
+  const premiere = lettres[0].toUpperCase();
+  if (lettres.length <= 2) return { indice: `${premiere}•`, lettres: lettres.length };
+  return { indice: `${premiere}${"•".repeat(lettres.length - 2)}${lettres[lettres.length - 1].toLowerCase()}`, lettres: lettres.length };
+}
 
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {
@@ -75,20 +115,13 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
       .maybeSingle();
     existing = (data as Existing | null) ?? null;
   }
-  // Déjà une carte : on la redonne directement si le prénom correspond aussi (« Alex » retrouve « Alexandre »).
-  // Choix d'Alexandre (15 oct. 2026) : numéro + prénom suffisent, pour que le client la retrouve seul en une seconde.
+  // Déjà une carte : on la redonne directement si le prénom correspond aussi (« Alex » retrouve « Alexandre », une faute de
+  // frappe est tolérée). Choix d'Alexandre (15 oct. 2026) : numéro + prénom suffisent, pour que le client la retrouve seul.
+  // Sinon (25 oct.) : jamais d'impasse. On l'aide avec un indice du prénom enregistré, et la caisse peut lui renvoyer sa carte.
   const existingCard = existing?.cards?.[0];
   if (existingCard) {
-    const simple = (s: string | null | undefined) =>
-      (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
-    const tape = simple(firstName);
-    const connu = simple(existing?.first_name);
-    const memePrenom = tape.length >= 3 && connu.length >= 3 && (connu.startsWith(tape) || tape.startsWith(connu));
-    if (memePrenom) redirect(`/carte/${existingCard.web_token}?deja=1`);
-    return {
-      error:
-        "Une carte existe déjà avec ce numéro (ou cet e-mail), mais avec un autre prénom. Tape le prénom donné à l'inscription pour la retrouver, ou demande en caisse.",
-    };
+    if (memePrenom(simple(firstName), simple(existing?.first_name))) redirect(`/carte/${existingCard.web_token}?deja=1`);
+    return { retrouver: indicePrenom(existing?.first_name) };
   }
 
   let customerId = existing?.id;
