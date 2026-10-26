@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { runDueNotifications, runStreakReminders, runWinback } from "@/lib/notifications";
+import { runReviewRequests } from "@/lib/review-requests";
 
 export const maxDuration = 300;
 
 /**
  * Tâche planifiée (toutes les 5 minutes via supabase/03-envoi-automatique.sql, + 1 fois par jour via vercel.json) :
- * envoie les notifications programmées, les messages "Tu nous manques" et les rappels de série.
+ * envoie les notifications programmées, les messages "Tu nous manques", les rappels de série et, en dernier,
+ * la demande d'avis Google (une fois par carte, ~2 h après le passage : lib/review-requests-core.ts ; lot et temps limités).
  * Plus d'offre automatique le jour J (décision d'Alexandre, 23 oct. 2026) : rien n'est ajouté sur les cartes ce jour-là.
  * Protégée par CRON_SECRET : Vercel l'envoie automatiquement dans l'en-tête Authorization.
  */
@@ -17,5 +19,6 @@ export async function GET(request: Request) {
   const sent = await runDueNotifications();
   const winback = await runWinback();
   const streaks = await runStreakReminders();
-  return NextResponse.json({ ok: true, notifications: sent, winback, streaks });
+  const reviews = await runReviewRequests();
+  return NextResponse.json({ ok: true, notifications: sent, winback, streaks, reviews });
 }

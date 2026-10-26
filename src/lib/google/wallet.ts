@@ -1,7 +1,7 @@
 import "server-only";
 import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
-import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
+import { appUrl, publicUrl, requireBase64Env, requireEnv, signupUrl } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, googleFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import type { Business, CardBundle, Program } from "@/lib/types";
 import { hashOf, inBackground, storageGet, storagePut } from "@/lib/wallet-cache";
@@ -116,7 +116,7 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
   void slots;
   const gf = googleFields(state, program.mode, labels.balance, coupons.length);
   const unit = program.mode === "stamps" ? (program.progress_style === "track" ? "secteurs" : "tampons") : program.mode === "points" ? "points" : "€";
-  const shareUrl = `${appUrl()}/c/${business.slug}?p=${card.referral_code}`;
+  const shareUrl = signupUrl(business.slug, card.referral_code);
   const streakText = streakSentence(state, program.streak_bonus, unit);
   const now: string[] = [state.sentence];
   if (state.lap) now.push(`⏱️ Ton record : ${state.lap}. Bats-le au prochain passage !`);
@@ -146,8 +146,8 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     ...textBlocks("gifts", "Les cadeaux", gifts),
   ];
   const uris = [
-    { uri: `${appUrl()}/carte/${card.web_token}`, description: "Ma carte et mes cadeaux", id: "card" },
-    { uri: `${appUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" },
+    { uri: `${publicUrl()}/carte/${card.web_token}`, description: "Ma carte et mes cadeaux", id: "card" },
+    { uri: `${publicUrl()}/confidentialite`, description: "Tes données et confidentialité", id: "privacy" },
   ];
   // Ordre affiché : la page de la carte, puis avis, Instagram, parrainage, confidentialité
   if (program.referral_bonus > 0) uris.splice(1, 0, { uri: shareUrl, description: "Parrainer un ami", id: "referral" });
@@ -271,7 +271,8 @@ export function googleSaveUrl(serial: string): string {
       iss: sa.client_email,
       aud: "google",
       typ: "savetowallet",
-      origins: [appUrl()],
+      // les deux adresses d'où l'on peut ajouter la carte (technique et publique)
+      origins: [...new Set([appUrl(), publicUrl()])],
       payload: { loyaltyObjects: [{ id: googleObjectId(serial) }] },
     },
     sa.private_key,

@@ -1,6 +1,7 @@
 import "server-only";
 import sharp from "sharp";
 import { FONT_DATA } from "@/lib/fonts";
+import type { LogoLook } from "@/lib/shop-theme";
 import { shapeText } from "@/lib/text-shape";
 import type { Business, Program } from "@/lib/types";
 // Icône et logos de la carte Apple : palette au maximum de qualité (rendu identique, fichiers 2 à 3 fois plus légers)
@@ -197,6 +198,60 @@ export async function googleWideLogoPng(business: Business): Promise<Buffer | nu
       .composite([{ input: inner, gravity: "center" }])
       .png()
       .toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ce que la page d'inscription doit savoir du logo pour bien le présenter (lib/shop-theme.ts décide) :
+ * a-t-il son propre fond (et de quelle couleur), ou est-il détouré (et de quelles couleurs) ?
+ * Même téléchargement mis en cache que pour la carte Wallet. null si le logo est absent ou illisible.
+ */
+export async function logoLook(url: string | null): Promise<LogoLook | null> {
+  const source = await fetchLogo(url);
+  if (!source) return null;
+  try {
+    const meta = await sharp(source).metadata();
+    const { data, info } = await sharp(source)
+      .ensureAlpha()
+      .resize(48, 48, { fit: "inside" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const { width: w, height: h, channels: c } = info;
+    const px = (x: number, y: number) => {
+      const i = (y * w + x) * c;
+      return [data[i], data[i + 1], data[i + 2], data[i + c - 1]] as const;
+    };
+    const solid = (p: readonly number[]) => p[3] > 200;
+
+    // Un logo « avec fond » a ses coins opaques ; son fond est uni si presque tout le bord a la même couleur
+    const corners = [px(0, 0), px(w - 1, 0), px(0, h - 1), px(w - 1, h - 1)];
+    const opaque = corners.filter(solid).length >= 3;
+    let edge: [number, number, number] | null = null;
+    if (opaque) {
+      const border: (readonly number[])[] = [];
+      for (let x = 0; x < w; x++) border.push(px(x, 0), px(x, h - 1));
+      for (let y = 1; y < h - 1; y++) border.push(px(0, y), px(w - 1, y));
+      const ring = border.filter(solid);
+      const avg = [0, 1, 2].map((k) => ring.reduce((s, p) => s + p[k], 0) / Math.max(1, ring.length));
+      const gaps = ring.map((p) => Math.hypot(p[0] - avg[0], p[1] - avg[1], p[2] - avg[2])).sort((a, b) => a - b);
+      const p90 = gaps[Math.floor(gaps.length * 0.9)] ?? 999;
+      if (ring.length >= border.length * 0.9 && p90 < 28) edge = avg.map(Math.round) as [number, number, number];
+    }
+
+    // Couleurs visibles (échantillon) et part de l'image couverte
+    let visible = 0;
+    const samples: [number, number, number][] = [];
+    const step = Math.max(1, Math.floor((w * h) / 400));
+    for (let i = 0; i < w * h; i++) {
+      const o = i * c;
+      if (data[o + c - 1] <= 200) continue;
+      visible++;
+      if (i % step === 0) samples.push([data[o], data[o + 1], data[o + 2]]);
+    }
+    const ratio = meta.width && meta.height ? meta.width / meta.height : w / h;
+    return { ratio, opaque, edge, coverage: visible / (w * h), samples };
   } catch {
     return null;
   }

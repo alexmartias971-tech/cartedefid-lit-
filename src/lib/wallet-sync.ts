@@ -14,38 +14,52 @@ function atMost(task: Promise<unknown>, ms: number): Promise<unknown> {
   return Promise.race([task.catch(() => null), new Promise((resolve) => setTimeout(resolve, ms))]);
 }
 
-/** Prévient les iPhone qui ont cette carte, et supprime les iPhone qui l'ont retirée. */
-async function pushApple(cardIds: string[]) {
-  if (cardIds.length === 0) return;
+/** Prévient les iPhone qui ont cette carte, et supprime les iPhone qui l'ont retirée. Renvoie le nombre d'iPhone prévenus. */
+async function pushApple(cardIds: string[]): Promise<number> {
+  if (cardIds.length === 0) return 0;
   const supabase = createAdminClient();
   const { data } = await supabase.from("apple_device_registrations").select("push_token").in("card_id", cardIds);
   const tokens = (data ?? []).map((r: { push_token: string }) => r.push_token);
-  if (tokens.length === 0) return;
-  const { invalid } = await pushToAppleDevices(tokens);
+  if (tokens.length === 0) return 0;
+  const { sent, invalid } = await pushToAppleDevices(tokens);
   if (invalid.length > 0) {
     await supabase.from("apple_device_registrations").delete().in("push_token", invalid);
   }
+  return sent;
 }
 
-async function pushGoogle(bundle: CardBundle, message?: GoogleMessage) {
-  if (!bundle.card.google_saved || !isGoogleConfigured()) return;
+/** Met la carte Google à jour ; true si un message avec notification a été posé. */
+async function pushGoogle(bundle: CardBundle, message?: GoogleMessage): Promise<boolean> {
+  if (!bundle.card.google_saved || !isGoogleConfigured()) return false;
   await upsertGoogleObject(bundle);
-  if (message) await addGoogleMessage(bundle.card.serial_number, message.header, message.body);
+  if (!message) return false;
+  await addGoogleMessage(bundle.card.serial_number, message.header, message.body);
+  return true;
 }
+
+/** Ce qui a réellement été envoyé : nombre d'iPhone prévenus (APNs a accepté), message Google posé. */
+export type SyncOutcome = { apple: number; google: boolean };
 
 /**
  * Met à jour une carte dans le Wallet du client, après un tampon ou un message.
  * Les erreurs sont notées dans les logs mais ne bloquent jamais le commerçant.
  */
-export async function syncCard(cardId: string, googleMessage?: GoogleMessage) {
+export async function syncCard(cardId: string, googleMessage?: GoogleMessage): Promise<SyncOutcome | null> {
   try {
     const bundle = await loadCardBundle("id", cardId);
-    if (!bundle) return;
+    if (!bundle) return null;
     // Les nouvelles images d'abord (8 s au plus) : l'iPhone qui va être prévenu trouvera la carte prête
     await atMost(warmWallet(bundle), 8000);
-    await Promise.allSettled([pushApple([cardId]), pushGoogle(bundle, googleMessage)]);
+    const [apple, google] = await Promise.allSettled([pushApple([cardId]), pushGoogle(bundle, googleMessage)]);
+    if (apple.status === "rejected") console.error("[syncCard apple]", (apple.reason as Error)?.message ?? apple.reason);
+    if (google.status === "rejected") console.error("[syncCard google]", (google.reason as Error)?.message ?? google.reason);
+    return {
+      apple: apple.status === "fulfilled" ? apple.value : 0,
+      google: google.status === "fulfilled" && google.value,
+    };
   } catch (err) {
     console.error("[syncCard]", (err as Error).message);
+    return null;
   }
 }
 

@@ -16,9 +16,26 @@ export function requireBase64Env(name: string): Buffer {
   return Buffer.from(requireEnv(name).trim(), "base64");
 }
 
-/** Adresse publique de l'application, sans "/" à la fin. */
+/**
+ * Adresse technique de l'application, sans "/" à la fin : mises à jour des cartes installées (webServiceURL d'Apple),
+ * images servies à Google, API. Elle ne doit plus changer : les cartes déjà dans les téléphones l'ont gardée.
+ */
 export function appUrl(): string {
   return (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+}
+
+/**
+ * Adresse des liens que voient les clients et les commerçants (ex. https://carte.walty.fr), sans "/" à la fin.
+ * Variable NEXT_PUBLIC_CARTE_URL ; sans elle, l'adresse technique (rien ne change tant qu'elle n'est pas posée).
+ */
+export function publicUrl(): string {
+  return (process.env.NEXT_PUBLIC_CARTE_URL || appUrl()).trim().replace(/\/+$/, "");
+}
+
+/** Lien d'inscription d'un commerce : court avec l'adresse publique (carte.walty.fr/ady-coffee-shop), sinon /c/slug. */
+export function signupUrl(slug: string, referral?: string | null): string {
+  const base = process.env.NEXT_PUBLIC_CARTE_URL ? `${publicUrl()}/${slug}` : `${appUrl()}/c/${slug}`;
+  return referral ? `${base}?p=${referral}` : base;
 }
 
 export function isAppleConfigured(): boolean {

@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import PrintButton from "@/components/PrintButton";
 import { programPitch } from "@/lib/card-state";
 import { requireAdmin } from "@/lib/admin-auth";
-import { appUrl } from "@/lib/env";
+import { publicUrl, signupUrl as lienInscription } from "@/lib/env";
 import type { Business, Program } from "@/lib/types";
 
 /** Kit de lancement : l'affiche à poser sur le comptoir + la fiche du commerçant. */
@@ -22,13 +22,13 @@ export default async function KitPage({ params }: { params: Promise<{ id: string
     .eq("business_id", id)
     .eq("is_active", true);
 
-  const signupUrl = `${appUrl()}/c/${business.slug}`;
+  const signupUrl = lienInscription(business.slug);
   const signupQr = await QRCode.toDataURL(signupUrl, { width: 600, margin: 1 });
   const accessQrs = await Promise.all(
     (accesses ?? []).map(async (a: { label: string; access_token: string }) => ({
       label: a.label,
-      url: `${appUrl()}/m/${a.access_token}`,
-      qr: await QRCode.toDataURL(`${appUrl()}/m/${a.access_token}`, { width: 300, margin: 1 }),
+      url: `${publicUrl()}/m/${a.access_token}`,
+      qr: await QRCode.toDataURL(`${publicUrl()}/m/${a.access_token}`, { width: 300, margin: 1 }),
     })),
   );
   const bg = program?.background_color ?? "#0B6474";

@@ -8,7 +8,7 @@ import NotificationForm from "@/components/NotificationForm";
 import OfferForm from "@/components/OfferForm";
 import { computeCardState, describeProgram, MODE_LABELS } from "@/lib/card-state";
 import { requireAdmin } from "@/lib/admin-auth";
-import { appUrl } from "@/lib/env";
+import { publicUrl, signupUrl as lienInscription } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
 import type { Business, Customer, NotificationRow, Program, Tier, CatalogReward } from "@/lib/types";
 import {
@@ -124,7 +124,7 @@ export default async function EntreprisePage({
   const notifications = (notifRes.data ?? []) as NotificationRow[];
   const platforms = (platformRes.data ?? []) as { wallet_platform: string | null }[];
   const byPlatform = (p: string) => platforms.filter((c) => c.wallet_platform === p).length;
-  const signupUrl = `${appUrl()}/c/${business.slug}`;
+  const signupUrl = lienInscription(business.slug);
 
   const stats = [
     { label: "Clients inscrits", value: countRes.count ?? 0 },
@@ -199,7 +199,7 @@ export default async function EntreprisePage({
               <a href="#carte" className="btn bg-white text-black">✏️ Modifier les règles et le design</a>
               <a href={signupUrl} target="_blank" rel="noopener" className="btn bg-white/10 text-white">Page d&apos;inscription ↗</a>
               {program.lap_times_enabled && (
-                <a href={`${appUrl()}/classement/${business.slug}`} target="_blank" rel="noopener" className="btn bg-white/10 text-white">Classement ↗</a>
+                <a href={`${publicUrl()}/classement/${business.slug}`} target="_blank" rel="noopener" className="btn bg-white/10 text-white">Classement ↗</a>
               )}
             </div>
           </div>
@@ -244,7 +244,7 @@ export default async function EntreprisePage({
                   </span>
                   <span className="text-xs text-gray-500">Dernière utilisation : {formatDateTime(a.last_used_at)}</span>
                 </div>
-                <CopyField value={`${appUrl()}/m/${a.access_token}`} />
+                <CopyField value={`${publicUrl()}/m/${a.access_token}`} />
                 <div className="flex flex-wrap gap-2">
                   {a.failed_attempts > 0 && (
                     <ConfirmButton

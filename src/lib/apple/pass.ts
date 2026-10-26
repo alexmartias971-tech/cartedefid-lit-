@@ -1,5 +1,5 @@
 import "server-only";
-import { appUrl, requireBase64Env, requireEnv } from "@/lib/env";
+import { appUrl, publicUrl, requireBase64Env, requireEnv, signupUrl } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, posterFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import { hexToRgb } from "@/lib/format";
 import type { CardBundle } from "@/lib/types";
@@ -44,7 +44,9 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
   const showName = design.showLogoText || !showTopLogo;
 
   const url = appUrl();
-  // Apple exige une adresse https pour les mises à jour automatiques.
+  // les liens que le client voit (parrainage, classement, sa carte, confidentialité) : l'adresse publique (carte.walty.fr)
+  const pub = publicUrl();
+  // Apple exige une adresse https pour les mises à jour automatiques (adresse technique, inchangée).
   const webService = url.startsWith("https://")
     ? { webServiceURL: `${url}/api/passkit`, authenticationToken: card.auth_token }
     : {};
@@ -190,7 +192,7 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
       value: catalog.filter((r) => r.is_active).map((r) => `${r.cost} pts : ${r.name}`).join("\n"),
     });
   }
-  const shareUrl = `${url}/c/${business.slug}?p=${card.referral_code}`;
+  const shareUrl = signupUrl(business.slug, card.referral_code);
   if (program.referral_bonus > 0) {
     store.backFields.push({
       key: "referral",
@@ -203,7 +205,7 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
     store.backFields.push({
       key: "leaderboard",
       label: "Classement",
-      value: `${state.rank ? `Tu es P${state.rank.pos} sur ${state.rank.total}. ` : ""}Le classement complet : ${url}/classement/${business.slug}`,
+      value: `${state.rank ? `Tu es P${state.rank.pos} sur ${state.rank.total}. ` : ""}Le classement complet : ${pub}/classement/${business.slug}`,
       dataDetectorTypes: ["PKDataDetectorTypeLink"],
     });
   }
@@ -236,7 +238,7 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
   store.backFields.push({
     key: "privacy",
     label: "Tes données",
-    value: `Politique de confidentialité et suppression de tes données : ${url}/confidentialite`,
+    value: `Politique de confidentialité et suppression de tes données : ${pub}/confidentialite`,
     dataDetectorTypes: ["PKDataDetectorTypeLink"],
   });
 
@@ -268,7 +270,7 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
     props,
     store,
     poster,
-    featuredActions: [{ identifier: "ma-carte", type: "viewOffersRewards", url: `${url}/carte/${card.web_token}` }],
+    featuredActions: [{ identifier: "ma-carte", type: "viewOffersRewards", url: `${pub}/carte/${card.web_token}` }],
     barcode: { format: "PKBarcodeFormatQR", message: card.serial_number, messageEncoding: "iso-8859-1" },
     images: { showTopLogo, showName },
   };

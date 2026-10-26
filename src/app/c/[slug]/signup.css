@@ -1,0 +1,257 @@
+/* =====================================================================
+ *  Page d'inscription client (/c/[slug]) — AUX COULEURS DU COMMERCE
+ *  Les couleurs arrivent en variables --ws-* calculées par lib/shop-theme.ts
+ *  (contrastes déjà vérifiés : 4,5:1 pour les textes, 3:1 pour contours et focus).
+ *  Tout est rangé sous .ws : rien ne change ailleurs (carte client, tableau de bord).
+ * ===================================================================== */
+
+.ws {
+  --ws-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ws-radius: 28px;
+
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 100dvh;
+  color: var(--ws-ink);
+  font-family: var(--font-manrope), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  background:
+    radial-gradient(120% 70% at 50% 0%, var(--ws-bg) 35%, transparent 100%),
+    linear-gradient(180deg, var(--ws-bg) 0%, var(--ws-bg-deep) 100%);
+  background-color: var(--ws-bg);
+  overflow-x: clip;
+}
+.ws *, .ws *::before, .ws *::after { box-sizing: border-box; }
+.ws ::selection { background: var(--ws-ink); color: var(--ws-bg); }
+.ws a { color: inherit; }
+.ws :focus-visible { outline: 3px solid var(--ws-ink); outline-offset: 3px; border-radius: 6px; }
+
+/* ---------- Colonne ---------- */
+.ws-main {
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  padding: max(28px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 22px;
+  align-content: start;
+}
+
+/* ---------- Le commerce : logo, nom, récompense ---------- */
+.ws-hero { display: grid; justify-items: center; gap: 12px; text-align: center; padding: 0 4px; }
+.ws-logo { display: inline-grid; place-items: center; }
+.ws-logo-img { display: block; width: calc(var(--lw) * 1px); height: calc(var(--lh) * 1px); object-fit: contain; }
+/* Fond du logo = fond de la page : il se fond, sans cadre */
+.ws-logo-merge .ws-logo-img { border-radius: 10px; }
+/* Logo avec son propre fond : coins arrondis et ombre douce, pas de pastille blanche */
+.ws-logo-badge .ws-logo-img {
+  border-radius: 20px;
+  box-shadow: 0 0 0 1px var(--ws-veil), 0 14px 30px -14px var(--ws-shadow-strong);
+}
+/* Logo détouré bien visible : posé tel quel ; forme pleine (rond, écusson) : une ombre détache ses bords */
+.ws-logo-shape .ws-logo-img { filter: drop-shadow(0 0 0.5px var(--ws-veil)) drop-shadow(0 10px 16px var(--ws-shadow)); }
+/* Logo détouré peu visible sur ce fond : sur une pastille (claire ou foncée) */
+.ws-logo-tile {
+  padding: 12px;
+  border-radius: 24px;
+  box-shadow: 0 0 0 1px var(--ws-veil), 0 16px 32px -16px var(--ws-shadow-strong);
+}
+.ws-monogram {
+  display: grid; place-items: center; width: 76px; height: 76px; border-radius: 24px;
+  background: var(--ws-ink); color: var(--ws-bg);
+  font-weight: 800; font-size: 34px; letter-spacing: -0.03em;
+  box-shadow: 0 16px 32px -16px var(--ws-shadow-strong);
+}
+
+.ws-name {
+  margin: 4px 0 0;
+  font-weight: 800;
+  font-size: clamp(27px, 7.6vw, 36px);
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.ws-reward {
+  margin: 0;
+  max-width: 100%;
+  font-size: 17px; font-weight: 700; line-height: 1.4; letter-spacing: -0.005em;
+  color: var(--ws-ink-soft);
+  text-wrap: balance;
+}
+.ws-reward-icon {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; margin: -4px 8px 0 0; vertical-align: middle;
+  border-radius: 50%; background: var(--ws-chip-soft); color: var(--ws-ink);
+}
+.ws-reward-icon svg { width: 17px; height: 17px; }
+
+.ws-chips { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.ws-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 34px; padding: 6px 14px 6px 11px; border-radius: 999px;
+  font-size: 14px; font-weight: 800; line-height: 1.25; text-align: left;
+}
+.ws-chip svg { flex: none; width: 17px; height: 17px; }
+.ws-chip-strong { background: var(--ws-ink); color: var(--ws-bg); }
+.ws-chip-soft { background: var(--ws-chip-soft); color: var(--ws-ink); box-shadow: inset 0 0 0 1px var(--ws-chip-soft-line); }
+
+/* ---------- La carte posée sur la feuille ---------- */
+.ws-stack { display: grid; margin-top: 4px; }
+.ws-card {
+  position: relative;
+  z-index: 2;
+  justify-self: center;
+  width: calc(100% - 28px);
+  aspect-ratio: 375 / 144;
+  margin-bottom: -46px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--ws-bg);
+  box-shadow: 0 2px 4px -2px var(--ws-shadow), 0 22px 40px -18px var(--ws-shadow-strong);
+  isolation: isolate;
+}
+.ws-card > svg { display: block; width: 100%; height: 100%; }
+.ws-card::after {
+  /* liseré + léger reflet, comme une vraie carte qu'on tient à la lumière */
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  background: linear-gradient(115deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 34%);
+}
+.ws-card-empty { aspect-ratio: 375 / 90; }
+
+/* ---------- La feuille claire du formulaire ---------- */
+.ws-sheet {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+  padding: 70px 20px 24px;
+  border-radius: var(--ws-radius);
+  background: var(--ws-sheet);
+  color: var(--ws-sheet-ink);
+  color-scheme: light;
+  box-shadow: 0 0 0 1px var(--ws-sheet-ring), 0 1px 2px var(--ws-shadow), 0 40px 70px -40px var(--ws-shadow-strong);
+}
+.ws-sheet :focus-visible { outline-color: var(--ws-ring); }
+.ws-sheet-head { display: grid; gap: 4px; text-align: center; }
+.ws-kicker { margin: 0; font-size: 12.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ws-link); }
+.ws-title { margin: 0; font-size: 25px; font-weight: 800; line-height: 1.15; letter-spacing: -0.025em; color: var(--ws-sheet-ink); }
+
+/* Champs */
+.ws-form { display: grid; gap: 18px; }
+.ws-field { display: grid; gap: 7px; min-width: 0; }
+.ws-label { font-size: 15px; font-weight: 700; color: var(--ws-sheet-ink); }
+.ws-label small { font-size: 13.5px; font-weight: 600; color: var(--ws-sheet-muted); }
+.ws-input {
+  width: 100%; min-width: 0; height: 58px;
+  padding: 0 16px;
+  border: 1.5px solid var(--ws-line);
+  border-radius: 14px;
+  background: var(--ws-field);
+  color: var(--ws-sheet-ink);
+  font: inherit; font-size: 18px; font-weight: 600; letter-spacing: -0.005em;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.ws-input::placeholder { color: var(--ws-placeholder); font-weight: 500; opacity: 1; }
+.ws-input:hover { border-color: var(--ws-sheet-muted); }
+.ws-input:focus { outline: none; border-color: var(--ws-ring); background: var(--ws-sheet); box-shadow: 0 0 0 4px var(--ws-ring-soft); }
+.ws-switch {
+  justify-self: start;
+  min-height: 44px; padding: 8px 2px; margin: -6px 0 -10px;
+  border: 0; background: none; cursor: pointer;
+  color: var(--ws-link); font: inherit; font-size: 15px; font-weight: 700;
+  text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 4px;
+}
+
+/* Cases à cocher : toute la ligne est cliquable, grosse case */
+.ws-checks { display: grid; gap: 10px; }
+.ws-check {
+  position: relative;
+  display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start;
+  min-height: 56px; padding: 15px 16px;
+  border: 1.5px solid var(--ws-hairline); border-radius: 16px;
+  background: var(--ws-field);
+  color: var(--ws-sheet-ink);
+  font-size: 15px; font-weight: 500; line-height: 1.45; text-wrap: pretty;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.ws-check:hover { border-color: var(--ws-line); }
+.ws-check:has(input:checked) { border-color: var(--ws-accent-line); background: var(--ws-accent-wash); }
+.ws-check input { position: absolute; left: 16px; top: 15px; width: 26px; height: 26px; margin: 0; opacity: 0; cursor: pointer; }
+.ws-box {
+  display: grid; place-items: center; width: 26px; height: 26px; margin-top: -1px;
+  border: 2px solid var(--ws-line); border-radius: 8px;
+  background: var(--ws-sheet); color: var(--ws-accent-ink);
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.ws-box svg { width: 16px; height: 16px; opacity: 0; transform: scale(0.5); transition: opacity 0.15s, transform 0.22s var(--ws-ease); }
+.ws-check input:checked + .ws-box { background: var(--ws-accent); border-color: var(--ws-accent); }
+.ws-check input:checked + .ws-box svg { opacity: 1; transform: none; }
+.ws-check input:focus-visible + .ws-box { outline: 3px solid var(--ws-ring); outline-offset: 2px; }
+.ws-check a { color: var(--ws-link); font-weight: 700; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.ws-req { color: var(--ws-sheet-muted); font-weight: 700; white-space: nowrap; }
+
+/* Messages */
+.ws-alert {
+  margin: 0;
+  display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start;
+  padding: 14px 16px; border-radius: 16px;
+  font-size: 15px; font-weight: 600; line-height: 1.45;
+}
+.ws-alert svg, .ws-alert-icon { width: 22px; height: 22px; margin-top: 0; }
+.ws-alert-error { background: #fdf1f0; border: 1.5px solid #efb1aa; color: #8a1a12; animation: ws-shake 0.4s var(--ws-ease); }
+.ws-alert-off { background: var(--ws-field); border: 1.5px solid var(--ws-hairline); color: var(--ws-sheet-ink); }
+
+/* Le bouton : couleur de la carte, texte lisible dessus */
+.ws-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 60px; padding: 14px 22px;
+  border: 0; border-radius: 16px;
+  background: var(--ws-accent);
+  color: var(--ws-accent-ink);
+  font: inherit; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 16px 28px -16px var(--ws-accent-shadow);
+  transition: transform 0.14s var(--ws-ease), filter 0.15s, box-shadow 0.15s;
+}
+.ws-btn:hover:not(:disabled) { filter: brightness(1.06) saturate(1.04); }
+.ws-btn:active:not(:disabled) { transform: scale(0.98); }
+.ws-btn:disabled { opacity: 0.75; cursor: progress; }
+.ws-btn:focus-visible { outline: 3px solid var(--ws-ring); outline-offset: 3px; border-radius: 16px; }
+.ws-btn-arrow { width: 20px; height: 20px; transition: transform 0.2s var(--ws-ease); }
+.ws-btn:hover:not(:disabled) .ws-btn-arrow { transform: translateX(3px); }
+.ws-spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid currentColor; border-right-color: transparent; animation: ws-spin 0.8s linear infinite; }
+.ws-note { margin: -6px 0 0; text-align: center; text-wrap: balance; font-size: 13.5px; font-weight: 500; line-height: 1.45; color: var(--ws-sheet-muted); }
+
+/* ---------- Pied de page ---------- */
+.ws-foot { display: grid; justify-items: center; gap: 6px; padding: 2px 0 4px; text-align: center; font-size: 13.5px; font-weight: 600; color: var(--ws-ink-soft); }
+.ws-foot a { display: inline-block; padding: 6px 4px; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.ws-foot .ws-by { text-decoration: none; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; }
+.ws-foot .ws-by b { font-weight: 800; }
+.ws-foot .ws-by:hover { text-decoration: underline; }
+
+/* ---------- Mouvements (coupés si le téléphone le demande) ---------- */
+@keyframes ws-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes ws-spin { to { transform: rotate(360deg); } }
+@keyframes ws-shake { 0%, 100% { transform: none; } 30% { transform: translateX(-4px); } 60% { transform: translateX(3px); } }
+.ws-rise { animation: ws-rise 0.6s var(--ws-ease) both; animation-delay: var(--d, 0ms); }
+@media (prefers-reduced-motion: reduce) {
+  .ws *, .ws *::before, .ws *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- Écran large : la même colonne, centrée, avec plus d'air ---------- */
+@media (min-width: 768px) {
+  .ws-main { max-width: 480px; padding-top: 64px; padding-bottom: 40px; gap: 26px; }
+  .ws-sheet { padding: 78px 32px 30px; }
+  .ws-card { width: calc(100% - 40px); margin-bottom: -52px; border-radius: 18px; }
+  .ws-title { font-size: 27px; }
+  .ws-logo-img { width: calc(var(--lw) * 1.2px); height: calc(var(--lh) * 1.2px); }
+  .ws-monogram { width: 88px; height: 88px; font-size: 40px; border-radius: 28px; }
+  .ws-reward { font-size: 18px; }
+}

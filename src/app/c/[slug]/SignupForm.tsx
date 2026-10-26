@@ -6,9 +6,9 @@ import type { SignupState } from "./actions";
 /** La coche des cases (dessinée, pour une grosse case facile au doigt). */
 function Box() {
   return (
-    <span className="wc-box" aria-hidden="true">
+    <span className="ws-box" aria-hidden="true">
       <svg viewBox="0 0 16 16">
-        <path d="M3 8.5l3.2 3L13 4.5" stroke="#10241f" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </span>
   );
@@ -48,7 +48,7 @@ export default function SignupForm({
   return (
     <form
       action={formAction}
-      className="wc-form"
+      className="ws-form"
       onSubmit={(e) => {
         // Envoi « à la main » : React ne vide pas le formulaire (ni les cases cochées) si une erreur revient
         e.preventDefault();
@@ -63,8 +63,8 @@ export default function SignupForm({
         <input id="site_web" name="site_web" tabIndex={-1} autoComplete="off" />
       </div>
 
-      <div className="wc-field">
-        <label htmlFor="first_name" className="wc-label">
+      <div className="ws-field">
+        <label htmlFor="first_name" className="ws-label">
           Ton prénom
         </label>
         <input
@@ -74,7 +74,7 @@ export default function SignupForm({
           autoComplete="given-name"
           autoCapitalize="words"
           enterKeyHint="next"
-          className="wc-input"
+          className="ws-input"
           placeholder="Ex. : Léa"
           value={firstName}
           onChange={(e) => setFirstName(e.target.value)}
@@ -82,8 +82,8 @@ export default function SignupForm({
       </div>
 
       {leaderboard && (
-        <div className="wc-field">
-          <label htmlFor="last_name" className="wc-label">
+        <div className="ws-field">
+          <label htmlFor="last_name" className="ws-label">
             Ton nom <small>(pour le classement)</small>
           </label>
           <input
@@ -91,7 +91,7 @@ export default function SignupForm({
             name="last_name"
             autoComplete="family-name"
             autoCapitalize="words"
-            className="wc-input"
+            className="ws-input"
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
           />
@@ -99,8 +99,8 @@ export default function SignupForm({
       )}
 
       {!byEmail ? (
-        <div className="wc-field">
-          <label htmlFor="phone" className="wc-label">
+        <div className="ws-field">
+          <label htmlFor="phone" className="ws-label">
             Ton téléphone
           </label>
           <input
@@ -110,18 +110,18 @@ export default function SignupForm({
             inputMode="tel"
             required
             autoComplete="tel"
-            className="wc-input"
+            className="ws-input"
             placeholder="0690 00 00 00"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
           />
-          <button type="button" className="wc-switch-link" onClick={() => setByEmail(true)}>
+          <button type="button" className="ws-switch" onClick={() => setByEmail(true)}>
             Je préfère donner mon e-mail
           </button>
         </div>
       ) : (
-        <div className="wc-field">
-          <label htmlFor="email" className="wc-label">
+        <div className="ws-field">
+          <label htmlFor="email" className="ws-label">
             Ton e-mail
           </label>
           <input
@@ -132,19 +132,19 @@ export default function SignupForm({
             required
             autoComplete="email"
             autoCapitalize="off"
-            className="wc-input"
+            className="ws-input"
             placeholder="lea@exemple.fr"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
-          <button type="button" className="wc-switch-link" onClick={() => setByEmail(false)}>
+          <button type="button" className="ws-switch" onClick={() => setByEmail(false)}>
             Je préfère donner mon téléphone
           </button>
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 10 }}>
-        <label className="wc-check">
+      <div className="ws-checks">
+        <label className="ws-check">
           <input type="checkbox" name="marketing" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} />
           <Box />
           <span>
@@ -152,7 +152,7 @@ export default function SignupForm({
           </span>
         </label>
         {leaderboard && (
-          <label className="wc-check">
+          <label className="ws-check">
             <input type="checkbox" name="leaderboard" checked={board} onChange={(e) => setBoard(e.target.checked)} />
             <Box />
             <span>
@@ -161,7 +161,7 @@ export default function SignupForm({
             </span>
           </label>
         )}
-        <label className="wc-check wc-check-required">
+        <label className="ws-check ws-check-required">
           <input type="checkbox" name="privacy" required checked={privacy} onChange={(e) => setPrivacy(e.target.checked)} />
           <Box />
           <span>
@@ -169,28 +169,36 @@ export default function SignupForm({
             <a href="/confidentialite" target="_blank">
               comment mes données sont utilisées
             </a>{" "}
-            <span className="wc-req">(obligatoire)</span>
+            <span className="ws-req">(obligatoire)</span>
           </span>
         </label>
       </div>
 
       {state.error && (
-        <p ref={errorRef} className="wc-alert wc-alert-error" role="alert">
-          <span className="wc-alert-icon" aria-hidden="true">✋</span>
+        <p ref={errorRef} className="ws-alert ws-alert-error" role="alert">
+          <svg className="ws-alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7.5v5.5M12 16.4v.1" />
+          </svg>
           <span>{state.error}</span>
         </p>
       )}
 
-      <button type="submit" disabled={pending} className="wc-btn wc-btn-primary wc-btn-xl">
+      <button type="submit" disabled={pending} className="ws-btn">
         {pending ? (
           <>
-            <span className="wc-spin" aria-hidden="true" /> Création de ta carte…
+            <span className="ws-spin" aria-hidden="true" /> Création de ta carte…
           </>
         ) : (
-          "Recevoir ma carte"
+          <>
+            Recevoir ma carte
+            <svg className="ws-btn-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 12h13M13 6.5 18.5 12 13 17.5" />
+            </svg>
+          </>
         )}
       </button>
-      <p className="wc-center wc-faint" style={{ fontSize: 13, marginTop: -6 }}>
+      <p className="ws-note">
         Ta carte s&apos;ajoute à Apple Wallet ou Google Wallet. Rien à télécharger.
       </p>
     </form>

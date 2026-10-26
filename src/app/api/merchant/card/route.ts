@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import sharp from "sharp";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels } from "@/lib/card-state";
-import { appUrl } from "@/lib/env";
+import { signupUrl as lienInscription } from "@/lib/env";
 import { json, pitchVous, requireManager } from "@/lib/merchant-space";
 import { renderStripFor } from "@/lib/strip";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -40,7 +40,8 @@ export async function GET() {
   ]);
   if (!biz) return json({ ok: false, error: "Commerce introuvable." }, 404);
   const business = biz as Business;
-  const signupUrl = `${appUrl()}/c/${business.slug}`;
+  // l'adresse que le commerçant imprime et partage : carte.walty.fr/<commerce> dès que l'adresse publique est posée
+  const signupUrl = lienInscription(business.slug);
 
   // Les compteurs « cartes dans les téléphones » partent tout de suite, en même temps que le QR code et l'image
   const programId = (programData as { id?: string } | null)?.id ?? null;

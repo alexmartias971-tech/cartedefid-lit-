@@ -1,0 +1,174 @@
+/* =====================================================================
+ *  Page de la carte client (/carte/[token]) — AUX COULEURS DU COMMERCE
+ *  S'appuie sur la base de la page d'inscription (c/[slug]/signup.css : fond, variables --ws-*,
+ *  bouton .ws-btn, pied de page, logo). Ici : ce qui est propre à la carte, rangé sous .ws.
+ *  Les badges Apple / Google (WalletButtons) et le bouton Partager (ShareButton) gardent leurs classes :
+ *  leurs styles sont repris ici, sous .ws (ils venaient avant de components/client/client.css).
+ * ===================================================================== */
+
+.ws .wk-main { gap: 16px; }
+.ws .wk-nowrap { white-space: nowrap; }
+.ws .wk-icon { flex: none; }
+
+/* ---------- Le commerce, en petit, en haut ---------- */
+.ws .wk-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ws .wk-top .ws-logo-badge .ws-logo-img { border-radius: 12px; }
+.ws .wk-top .ws-logo-tile { padding: 6px; border-radius: 14px; }
+.ws .wk-top .ws-logo-merge .ws-logo-img { border-radius: 6px; }
+.ws .wk-top-dot {
+  flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px;
+  background: var(--ws-ink); color: var(--ws-bg); font-weight: 800; font-size: 20px;
+}
+.ws .wk-top-name { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; font-size: 16px; line-height: 1.2; color: var(--ws-ink); }
+.ws .wk-top-sub { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ws-ink-soft); }
+
+/* ---------- Titre ---------- */
+.ws .wk-intro { display: grid; gap: 6px; margin-top: 4px; }
+.ws .wk-h1 {
+  margin: 0; font-weight: 800; font-size: clamp(27px, 7.4vw, 34px); line-height: 1.08; letter-spacing: -0.03em;
+  color: var(--ws-ink); text-wrap: balance; overflow-wrap: anywhere;
+}
+/* Le prénom surligné d'un trait de la couleur du fond, plus profond (le contraste ne peut que monter) */
+.ws .wk-mark { background: linear-gradient(transparent 58%, var(--ws-chip-soft) 58%, var(--ws-chip-soft) 92%, transparent 92%); padding: 0 0.08em; }
+.ws .wk-sentence { margin: 0; font-size: 16.5px; font-weight: 600; line-height: 1.45; color: var(--ws-ink-soft); }
+
+/* ---------- Panneaux clairs (même feuille que l'inscription) ---------- */
+.ws .wk-panel {
+  position: relative; /* passe au-dessus de l'ombre de la carte juste avant */
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 20px;
+  border-radius: 24px;
+  background: var(--ws-sheet);
+  color: var(--ws-sheet-ink);
+  color-scheme: light;
+  box-shadow: 0 0 0 1px var(--ws-sheet-ring), 0 1px 2px var(--ws-shadow), 0 26px 50px -32px var(--ws-shadow-strong);
+}
+.ws .wk-panel :focus-visible { outline-color: var(--ws-ring); }
+.ws .wk-panel a:not(.wk-btn-ghost):not(.ws-btn) { color: var(--ws-link); }
+.ws .wk-h2 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.25; color: var(--ws-sheet-ink); }
+.ws .wk-h2-icon { display: flex; align-items: center; gap: 8px; }
+.ws .wk-h2-icon .wk-icon { color: var(--ws-link); }
+.ws .wk-muted { margin: 0; color: var(--ws-sheet-muted); }
+.ws .wk-small { font-size: 14.5px; line-height: 1.45; }
+.ws .wk-panel p { margin: 0; }
+
+/* Déjà inscrit */
+.ws .wk-hello {
+  grid-template-columns: auto 1fr; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 20px;
+  font-size: 16px; font-weight: 700; line-height: 1.35;
+}
+.ws .wk-hello small { display: block; margin-top: 2px; font-size: 14px; font-weight: 600; color: var(--ws-sheet-muted); }
+.ws .wk-hello-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; background: var(--ws-accent-wash); color: var(--ws-link); }
+
+/* Le gros bloc Wallet */
+.ws .wk-wallet { justify-items: center; gap: 12px; padding: 20px 16px 18px; text-align: center; }
+.ws .wk-wallet-title { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; color: var(--ws-sheet-ink); text-wrap: balance; }
+.ws .wk-wallet-note { font-size: 13.5px; font-weight: 600; color: var(--ws-sheet-muted); text-wrap: balance; }
+
+/* Badges officiels Apple / Google (composant WalletButtons) : jamais recolorés */
+.ws .wc-badges { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
+.ws .wc-badge-link { display: block; border-radius: 12px; transition: transform 0.12s var(--ws-ease); -webkit-tap-highlight-color: transparent; }
+.ws .wc-badge-link:active { transform: scale(0.97); }
+.ws .wc-badge-link:focus-visible { outline: 3px solid var(--ws-ring); outline-offset: 3px; }
+.ws .wc-badge { display: block; width: auto; height: 50px; }
+.ws .wc-badges-solo .wc-badge { height: 64px; }
+.ws .wc-badge-text {
+  display: inline-flex; align-items: center; gap: 10px; height: 54px; padding: 0 22px; border-radius: 14px;
+  background: #000; color: #fff; font-weight: 700; font-size: 17px; border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+/* La carte du commerce, mise en scène (halo doux de la couleur des textes, pas de dégradé Walty) */
+.ws .wk-stage { position: relative; display: flex; justify-content: center; padding: 8px 0 6px; isolation: isolate; }
+.ws .wk-stage::before {
+  content: ""; position: absolute; z-index: -1; left: 50%; top: 52%; width: 78%; height: 72%; transform: translate(-50%, -50%);
+  border-radius: 50%; background: var(--ws-veil); filter: blur(48px);
+}
+.ws .wk-stage .card-preview { filter: drop-shadow(0 26px 34px var(--ws-shadow-strong)); }
+
+/* Message du commerce */
+.ws .wk-msg { grid-template-columns: auto 1fr; align-items: start; gap: 10px; padding: 14px 16px; border-radius: 18px; font-size: 15.5px; font-weight: 600; line-height: 1.45; }
+.ws .wk-msg .wk-icon { color: var(--ws-link); margin-top: 1px; }
+
+/* Étapes « Pas de Wallet ? » */
+.ws .wk-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ws .wk-steps li { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; font-size: 15px; line-height: 1.45; color: var(--ws-sheet-muted); }
+.ws .wk-steps li b { color: var(--ws-sheet-ink); }
+.ws .wk-steps-n { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--ws-accent-wash); color: var(--ws-link); font-weight: 800; font-size: 13.5px; }
+
+/* Offres (tickets) */
+.ws .wk-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ws .wk-ticket {
+  position: relative; display: grid; gap: 2px; padding: 12px 14px 12px 20px; border-radius: 14px;
+  background: var(--ws-accent-wash); border: 1.5px dashed var(--ws-accent-line); font-weight: 700; font-size: 15.5px; color: var(--ws-sheet-ink);
+}
+.ws .wk-ticket::before {
+  content: ""; position: absolute; left: -8px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
+  background: var(--ws-sheet); border-right: 1.5px dashed var(--ws-accent-line);
+}
+.ws .wk-ticket small { font-weight: 600; font-size: 13.5px; color: var(--ws-sheet-muted); }
+
+/* Niveaux et catalogue */
+.ws .wk-tier { display: flex; align-items: center; gap: 12px; }
+.ws .wk-tier-dot { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; background: var(--ws-accent-wash); color: var(--ws-link); }
+.ws .wk-reward { display: flex; justify-content: space-between; gap: 12px; padding: 11px 13px; border-radius: 12px; background: var(--ws-field); font-size: 15px; }
+.ws .wk-reward b { white-space: nowrap; color: var(--ws-sheet-muted); }
+.ws .wk-reward-ok { background: var(--ws-accent-wash); box-shadow: inset 0 0 0 1.5px var(--ws-accent-line); font-weight: 700; }
+.ws .wk-reward-ok b { color: var(--ws-link); }
+
+/* Boutons secondaires (avis, Instagram) et bouton Partager (composant ShareButton : classes .btn .btn-primary) */
+.ws a.ws-btn { color: var(--ws-accent-ink); text-decoration: none; }
+.ws .wk-btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px; width: 100%; min-height: 52px; padding: 12px 18px;
+  border-radius: 14px; border: 1.5px solid var(--ws-line); background: var(--ws-sheet); color: var(--ws-sheet-ink);
+  font-weight: 700; font-size: 16px; line-height: 1.2; text-decoration: none; transition: background-color 0.15s, transform 0.12s var(--ws-ease);
+}
+.ws .wk-btn-ghost:hover { background: var(--ws-field); }
+.ws .wk-btn-ghost:active { transform: scale(0.98); }
+.ws .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 54px; padding: 12px 20px;
+  border-radius: 14px; border: 0; font: inherit; font-weight: 800; font-size: 16.5px; line-height: 1.2; cursor: pointer;
+  transition: transform 0.12s var(--ws-ease), filter 0.15s;
+}
+.ws .btn:active:not(:disabled) { transform: scale(0.98); }
+.ws .btn-primary { background: var(--ws-accent); color: var(--ws-accent-ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 14px 26px -16px var(--ws-accent-shadow); }
+.ws .btn-primary:hover:not(:disabled) { background: var(--ws-accent); filter: brightness(1.06); }
+.ws .btn:focus-visible { outline: 3px solid var(--ws-ring); outline-offset: 3px; }
+
+/* Repli « Comment ça marche » */
+.ws .wk-details summary {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 30px;
+  cursor: pointer; list-style: none; font-weight: 800; font-size: 16.5px; color: var(--ws-sheet-ink);
+}
+.ws .wk-details summary::-webkit-details-marker { display: none; }
+.ws .wk-details summary::after {
+  content: "+"; flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--ws-accent-wash); color: var(--ws-link); font-size: 21px; font-weight: 600; transition: transform 0.2s var(--ws-ease);
+}
+.ws .wk-details[open] summary::after { transform: rotate(45deg); }
+.ws .wk-details ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.ws .wk-details li { display: grid; grid-template-columns: 28px 1fr; gap: 6px; font-size: 15px; line-height: 1.45; color: var(--ws-sheet-muted); }
+.ws .wk-details li b { color: var(--ws-sheet-ink); }
+
+/* ---------- Cadeau prêt : à montrer en caisse ---------- */
+.ws .wk-gift { justify-items: center; gap: 8px; padding: 26px 20px 24px; text-align: center; border-radius: 28px; }
+.ws .wk-gift-puck {
+  display: grid; place-items: center; min-width: 96px; min-height: 96px; padding: 12px; margin-bottom: 6px;
+  border-radius: 26px; background: var(--ws-bg); box-shadow: 0 14px 28px -16px var(--ws-shadow-strong);
+}
+.ws .wk-gift-icon {
+  display: grid; place-items: center; width: 76px; height: 76px; margin-bottom: 6px; border-radius: 24px;
+  background: var(--ws-accent); color: var(--ws-accent-ink); box-shadow: 0 14px 28px -16px var(--ws-accent-shadow);
+}
+.ws .wk-gift-title { margin: 0; font-weight: 800; font-size: clamp(25px, 7vw, 31px); line-height: 1.1; letter-spacing: -0.03em; color: var(--ws-sheet-ink); text-wrap: balance; }
+.ws .wk-gift-reward { font-size: 19px; font-weight: 800; color: var(--ws-link); text-wrap: balance; }
+.ws .wk-panel .wk-gift-hint { margin-top: 6px; font-size: 14.5px; font-weight: 600; color: var(--ws-sheet-muted); }
+.ws .wk-gift-qr { width: 220px; height: 220px; padding: 10px; border-radius: 18px; background: #fff; box-shadow: 0 0 0 1.5px var(--ws-hairline), 0 12px 24px -16px var(--ws-shadow); }
+
+@media (min-width: 768px) {
+  .ws .wk-main { gap: 18px; }
+  .ws .wk-panel { padding: 24px; }
+  .ws .wk-gift { padding: 32px 28px 28px; }
+}
