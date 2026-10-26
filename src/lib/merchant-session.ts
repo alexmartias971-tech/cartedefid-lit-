@@ -1,6 +1,6 @@
 import "server-only";
 import crypto from "node:crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { requireEnv } from "@/lib/env";
 import { perRequest } from "@/lib/request-memo";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -98,6 +98,12 @@ export async function getMerchantSession(): Promise<MerchantSession | null> {
   const raw = store.get(COOKIE)?.value;
   const parsed = readSessionCookie(raw);
   if (!parsed) return null;
-  // le badge dure 12 h : il a été émis 12 h avant son expiration
-  return perRequest(store, `session:${raw}`, () => loadSession(parsed.scannerId, parsed.expires - DURATION_HOURS * 3600 * 1000));
+  // le badge dure 12 h : il a été émis 12 h avant son expiration (une entrée Walty, plus courte, paraît plus ancienne : sans effet)
+  const session = await perRequest(store, `session:${raw}`, () => loadSession(parsed.scannerId, parsed.expires - DURATION_HOURS * 3600 * 1000));
+  // Onglet resté ouvert sur un autre commerce (26 oct. 2026) : l'espace de walty.fr dit pour quel commerce il agit (en-tête
+  // X-Walty-Commerce, relayé par sa passerelle). Si ce n'est plus celui de la session (une autre connexion a eu lieu dans le
+  // navigateur), la demande est refusée comme une session expirée : l'espace se recharge sur le bon commerce.
+  const commerce = (await headers()).get("x-walty-commerce");
+  if (session && commerce && commerce !== session.businessId) return null;
+  return session;
 }

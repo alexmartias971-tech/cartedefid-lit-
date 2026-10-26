@@ -59,8 +59,12 @@ export async function GET(request: Request) {
       ok: true,
       loggedIn: true,
       business: { name: business?.name ?? "", logo_url: business?.logo_url ?? null },
+      // le commerce de la session : l'espace le renvoie avec ses actions (en-tête X-Walty-Commerce, voir merchant-session.ts)
+      businessId: session.businessId,
       // rôle (comme l'adresse « role ») : walty.fr n'a plus besoin d'une deuxième demande à l'ouverture de l'espace
       role: role.manager ? "gerant" : "employe",
+      // entrée Walty (Alexandre, depuis le CRM) : l'espace l'indique, et ne propose pas de changer un mot de passe
+      admin: !!role.admin,
       password: role.password,
       mustChangePassword: role.mustChange,
       label: session.label,

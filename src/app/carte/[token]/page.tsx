@@ -21,7 +21,13 @@ const loadCard = cache((token: string) => loadCardBundle("web_token", token));
 export async function generateMetadata({ params }: Pick<Props, "params">): Promise<Metadata> {
   const { token } = await params;
   const bundle = await loadCard(token);
-  return { title: bundle ? `${bundle.business.name} · Ma carte de fidélité` : "Ma carte de fidélité" };
+  if (!bundle) return { title: "Ma carte de fidélité" };
+  // le manifeste de CETTE carte : mise sur l'écran d'accueil, elle rouvre la carte du client, au nom du commerce
+  return {
+    title: `${bundle.business.name} · Ma carte de fidélité`,
+    manifest: `/carte/${token}/manifest.webmanifest`,
+    appleWebApp: { capable: true, title: bundle.business.name.slice(0, 24), statusBarStyle: "default" },
+  };
 }
 
 /** La barre du téléphone prend la couleur du commerce (comme la page d'inscription). */

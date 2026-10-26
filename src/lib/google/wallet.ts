@@ -84,6 +84,7 @@ function classBody(program: Program, business: Business) {
     countryCode: "FR",
     localizedIssuerName: { defaultValue: { language: "fr-FR", value: business.name } },
     multipleDevicesAndHoldersAllowedStatus: "ONE_USER_ALL_DEVICES",
+    ...merchantLocations(business),
   };
 }
 
@@ -172,10 +173,17 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
     },
     textModulesData,
     linksModuleData: { uris },
-    ...(business.latitude != null && business.longitude != null
-      ? { locations: [{ latitude: Number(business.latitude), longitude: Number(business.longitude) }] }
-      : {}),
+    // Notification de proximité : « merchantLocations » (l'ancien « locations » ne déclenche plus rien chez Google). Le rayon est
+    // fixé par Google, comme le texte de la notification.
+    ...merchantLocations(business),
   };
+}
+
+/** Le commerce sur la carte Google (classe et carte de chaque client), s'il a sa position : Google prévient le client qui passe à côté. */
+function merchantLocations(business: Business) {
+  return business.latitude != null && business.longitude != null
+    ? { merchantLocations: [{ latitude: Number(business.latitude), longitude: Number(business.longitude) }] }
+    : {};
 }
 
 /** Découpe des paragraphes en blocs de texte Google de 500 caractères au plus (« (suite) » pour les blocs suivants). */

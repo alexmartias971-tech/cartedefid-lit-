@@ -51,7 +51,8 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
     ? { webServiceURL: `${url}/api/passkit`, authenticationToken: card.auth_token }
     : {};
 
-  // La carte apparaît sur l'écran verrouillé quand le client passe près du commerce
+  // La carte apparaît sur l'écran verrouillé quand le client passe près du commerce (demande d'Alexandre, 26 oct. 2026 : à moins de
+  // 100 m). maxDistance est un plafond : l'iPhone prend le plus petit entre lui et sa propre distance pour une carte de fidélité.
   const locations =
     business.latitude != null && business.longitude != null
       ? {
@@ -62,7 +63,7 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
               relevantText: business.relevant_text || `Tu es près de ${business.name} ! Montre ta carte.`,
             },
           ],
-          maxDistance: 150,
+          maxDistance: 100,
         }
       : {};
 

@@ -1,10 +1,23 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getMerchantSession } from "@/lib/merchant-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import MerchantApp from "./MerchantApp";
 import PinForm from "./PinForm";
 
-export const metadata = { title: "Espace commerçant" };
+/**
+ * Titre, et le manifeste de CETTE caisse : mise sur l'écran d'accueil du téléphone d'un employé, elle rouvre la caisse
+ * (et pas la page d'accueil du site), sous le nom « Caisse ».
+ */
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
+  const { token } = await params;
+  if (!/^[0-9a-f]{48}$/.test(token)) return { title: "Caisse" };
+  return {
+    title: "Caisse",
+    manifest: `/m/${token}/manifest.webmanifest`,
+    appleWebApp: { capable: true, title: "Caisse", statusBarStyle: "default" },
+  };
+}
 
 /** Espace du commerçant : code PIN, puis Scanner / Notifications / Clients. */
 export default async function MerchantPage({ params }: { params: Promise<{ token: string }> }) {
