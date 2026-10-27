@@ -205,11 +205,27 @@ function textBlocks(id: string, header: string, parts: string[]): { id: string; 
 }
 
 /** Crée ou met à jour la carte Google d'un client. */
-export async function upsertGoogleObject(bundle: CardBundle) {
+/**
+ * Crée ou met à jour la carte Google. `notify` : Google prévient le téléphone si le compteur (loyaltyPoints) a changé,
+ * comme l'iPhone après un passage (notifyPreference : pour cette requête seulement, 3 par 24 h au plus).
+ * Si Google refuse la notification (quota), la carte est quand même mise à jour, sans notification.
+ */
+export async function upsertGoogleObject(bundle: CardBundle, opts: { notify?: boolean } = {}) {
   const body = objectBody(bundle);
   const existing = await call("GET", `/loyaltyObject/${body.id}`);
-  if (existing.status === 404) await call("POST", "/loyaltyObject", body);
-  else await call("PUT", `/loyaltyObject/${body.id}`, body);
+  if (existing.status === 404) {
+    await call("POST", "/loyaltyObject", body);
+    return;
+  }
+  if (opts.notify) {
+    try {
+      await call("PUT", `/loyaltyObject/${body.id}`, { ...body, notifyPreference: "NOTIFY_ON_UPDATE" });
+      return;
+    } catch (err) {
+      console.error("[google notify]", (err as Error).message);
+    }
+  }
+  await call("PUT", `/loyaltyObject/${body.id}`, body);
 }
 
 /**

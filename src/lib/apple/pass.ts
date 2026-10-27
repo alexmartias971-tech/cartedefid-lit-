@@ -173,12 +173,13 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
       ...(card.last_message ? { changeMessage: "%@" } : {}),
     },
   );
+  // Pas de notification ici : une offre ne prévient que si le commerçant coche « Prévenir mes clients », et seulement ceux
+  // qui acceptent les offres, par le message ci-dessus (même chose sur Android). Sinon, elle arrive sur la carte sans bruit.
   if (coupons.length > 0) {
     store.backFields.push({
       key: "coupons",
       label: "Tes offres (à montrer en caisse)",
       value: coupons.map((c) => `• ${c.title}`).join("\n"),
-      changeMessage: "Nouvelle offre disponible !",
     });
   }
   if (state.tier) {

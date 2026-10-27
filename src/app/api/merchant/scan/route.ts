@@ -6,7 +6,7 @@ import { getMerchantSession } from "@/lib/merchant-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CardBundle } from "@/lib/types";
 import { visitInfo } from "@/lib/visit-info";
-import { syncCard, syncCards } from "@/lib/wallet-sync";
+import { COUNTER_ACTIONS, syncCard, syncCards } from "@/lib/wallet-sync";
 
 type Action = "lookup" | "stamp" | "redeem" | "purchase" | "reward" | "cashback" | "coupon" | "undo" | "lap";
 
@@ -205,7 +205,8 @@ export async function POST(request: Request) {
     } else if (body.action === "stamp" && result.reward_ready) {
       await syncCard(cardId, { header: businessName, body: "🎁 Ton cadeau est débloqué ! Montre ta carte en caisse." });
     } else {
-      await syncCard(cardId);
+      // passage ordinaire : Android prévenu comme l'iPhone quand le compteur change
+      await syncCard(cardId, undefined, { notifyUpdate: COUNTER_ACTIONS.includes(body.action!) });
     }
     if (result.referrer_card_id) {
       await syncCard(result.referrer_card_id, {

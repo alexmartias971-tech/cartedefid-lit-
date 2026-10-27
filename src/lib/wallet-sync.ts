@@ -8,6 +8,11 @@ import type { CardBundle } from "@/lib/types";
 import { warmWallet } from "@/lib/wallet-warm";
 
 type GoogleMessage = { header: string; body: string };
+/** notifyUpdate : Android est prévenu si le compteur de la carte a changé (l'iPhone l'est déjà : champ « progress » de pass.ts). */
+type SyncOptions = { notifyUpdate?: boolean };
+
+/** Les passages qui changent le compteur : l'iPhone affiche une notification, Android aussi avec notifyUpdate. */
+export const COUNTER_ACTIONS: readonly string[] = ["stamp", "purchase", "redeem", "reward", "cashback"];
 
 /** Attend une tâche au plus `ms` millisecondes (la suite ne doit jamais rester bloquée). */
 function atMost(task: Promise<unknown>, ms: number): Promise<unknown> {
@@ -29,9 +34,10 @@ async function pushApple(cardIds: string[]): Promise<number> {
 }
 
 /** Met la carte Google à jour ; true si un message avec notification a été posé. */
-async function pushGoogle(bundle: CardBundle, message?: GoogleMessage): Promise<boolean> {
+async function pushGoogle(bundle: CardBundle, message?: GoogleMessage, notifyUpdate = false): Promise<boolean> {
   if (!bundle.card.google_saved || !isGoogleConfigured()) return false;
-  await upsertGoogleObject(bundle);
+  // un message porte déjà sa notification : pas de seconde notification « carte mise à jour »
+  await upsertGoogleObject(bundle, { notify: notifyUpdate && !message });
   if (!message) return false;
   await addGoogleMessage(bundle.card.serial_number, message.header, message.body);
   return true;
@@ -44,13 +50,13 @@ export type SyncOutcome = { apple: number; google: boolean };
  * Met à jour une carte dans le Wallet du client, après un tampon ou un message.
  * Les erreurs sont notées dans les logs mais ne bloquent jamais le commerçant.
  */
-export async function syncCard(cardId: string, googleMessage?: GoogleMessage): Promise<SyncOutcome | null> {
+export async function syncCard(cardId: string, googleMessage?: GoogleMessage, options: SyncOptions = {}): Promise<SyncOutcome | null> {
   try {
     const bundle = await loadCardBundle("id", cardId);
     if (!bundle) return null;
     // Les nouvelles images d'abord (8 s au plus) : l'iPhone qui va être prévenu trouvera la carte prête
     await atMost(warmWallet(bundle), 8000);
-    const [apple, google] = await Promise.allSettled([pushApple([cardId]), pushGoogle(bundle, googleMessage)]);
+    const [apple, google] = await Promise.allSettled([pushApple([cardId]), pushGoogle(bundle, googleMessage, options.notifyUpdate)]);
     if (apple.status === "rejected") console.error("[syncCard apple]", (apple.reason as Error)?.message ?? apple.reason);
     if (google.status === "rejected") console.error("[syncCard google]", (google.reason as Error)?.message ?? google.reason);
     return {

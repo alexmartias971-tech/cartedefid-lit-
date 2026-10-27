@@ -78,7 +78,8 @@ function syncAfterStamp(before: CardBundle, result: StampResult, serial: string)
     } else if (result.reward_ready) {
       await syncCard(cardId, { header: businessName, body: "🎁 Ton cadeau est débloqué ! Montre ta carte en caisse." });
     } else {
-      await syncCard(cardId);
+      // tampon ordinaire : Android prévenu comme l'iPhone
+      await syncCard(cardId, undefined, { notifyUpdate: true });
     }
     if (result.referrer_card_id) {
       await syncCard(result.referrer_card_id, {

@@ -5,7 +5,7 @@ import { getMerchantRole } from "@/lib/merchant-role";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CardBundle } from "@/lib/types";
 import { visitInfo } from "@/lib/visit-info";
-import { syncCard } from "@/lib/wallet-sync";
+import { COUNTER_ACTIONS, syncCard } from "@/lib/wallet-sync";
 
 /**
  * Actions « à la main », SANS scanner le QR code de la carte (espace commerçant de walty.fr, rubrique Scanner).
@@ -252,7 +252,8 @@ export async function POST(request: Request) {
     } else if (action === "stamp" && result.reward_ready) {
       await syncCard(cardId, { header: businessName, body: "🎁 Ton cadeau est débloqué ! Montre ta carte en caisse." });
     } else {
-      await syncCard(cardId);
+      // passage ordinaire : Android prévenu comme l'iPhone quand le compteur change
+      await syncCard(cardId, undefined, { notifyUpdate: COUNTER_ACTIONS.includes(action) });
     }
     if (result.referrer_card_id) {
       await syncCard(result.referrer_card_id, {
