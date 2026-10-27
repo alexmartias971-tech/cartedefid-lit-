@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { businessesWithAutoOff } from "./auto-options";
 import type { CardBundle } from "./types";
 
 /**
@@ -282,7 +283,12 @@ export async function runReviewRequestsWith(deps: ReviewDeps): Promise<ReviewRun
     if (error) return abort(`walty_plans : ${error.message}`);
     for (const p of (data ?? []) as { business_id: string; plan: string }[]) planOf.set(p.business_id, p.plan);
   }
-  const businessIds = withLink.filter((b) => !planOf.has(b.id) || planOf.get(b.id) === "tout-compris").map((b) => b.id);
+  // … et où Walty n'a pas coupé la demande d'avis dans le CRM (réglages illisibles : on n'envoie rien)
+  const avisOff = await businessesWithAutoOff(db, "avis");
+  if (!avisOff) return abort("crm_reglages : réglages illisibles");
+  const businessIds = withLink
+    .filter((b) => (!planOf.has(b.id) || planOf.get(b.id) === "tout-compris") && !avisOff.has(b.id))
+    .map((b) => b.id);
   report.businesses = businessIds.length;
   if (businessIds.length === 0) return report;
 

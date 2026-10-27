@@ -1,4 +1,5 @@
 import "server-only";
+import { businessesWithAutoOff } from "@/lib/auto-options";
 import { loadCardBundlesByIds } from "@/lib/cards";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Business, NotificationRow } from "@/lib/types";
@@ -270,11 +271,25 @@ export async function runDueNotifications(): Promise<number> {
   return data?.length ?? 0;
 }
 
-/** Message automatique "Tu nous manques" aux clients absents depuis 30 jours (une seule fois). */
+/**
+ * Message automatique "Tu nous manques" aux clients absents depuis 30 jours (une seule fois).
+ * Sauf les commerces où Walty l'a coupé dans le CRM (auto-options) : leurs cartes sont écartées dès la requête.
+ */
 export async function runWinback(): Promise<number> {
   const supabase = createAdminClient();
   const now = Date.now();
-  const { data } = await supabase
+  const off = await businessesWithAutoOff(supabase, "winback");
+  if (!off) return 0;
+  let offPrograms: string[] = [];
+  if (off.size) {
+    const { data: progs, error } = await supabase.from("loyalty_programs").select("id").in("business_id", [...off]);
+    if (error) {
+      console.error("[runWinback]", error.message);
+      return 0;
+    }
+    offPrograms = ((progs ?? []) as { id: string }[]).map((p) => p.id);
+  }
+  let query = supabase
     .from("cards")
     .select(
       "id, stamps_count, customers!inner(first_name, last_visit_at, marketing_optin), loyalty_programs!inner(reward_threshold, is_active, businesses!inner(name, status))",
@@ -284,8 +299,9 @@ export async function runWinback(): Promise<number> {
     .lt("customers.last_visit_at", new Date(now - 30 * DAY).toISOString())
     .gt("customers.last_visit_at", new Date(now - 60 * DAY).toISOString())
     .eq("loyalty_programs.is_active", true)
-    .eq("loyalty_programs.businesses.status", "active")
-    .limit(100);
+    .eq("loyalty_programs.businesses.status", "active");
+  if (offPrograms.length) query = query.not("program_id", "in", `(${offPrograms.join(",")})`);
+  const { data } = await query.limit(100);
 
   type Row = {
     id: string;
