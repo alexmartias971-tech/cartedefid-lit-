@@ -244,7 +244,8 @@ export function applyTrade(d: Draft, trade: Trade): Draft {
     foreground_color: amb.foreground_color,
     label_color: amb.label_color,
     stamp_color: amb.stamp_color,
-    lap_times_enabled: trade.id === "sport" ? d.lap_times_enabled : false,
+    // chrono et classement retirés (27 oct. 2026)
+    lap_times_enabled: false,
     progress_style: d.progress_style === "track" && trade.id !== "sport" ? "glass" : d.progress_style,
     layout: { ...d.layout, trade: trade.id },
     tradeChosen: true,

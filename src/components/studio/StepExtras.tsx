@@ -75,12 +75,6 @@ export default function StepExtras({
           <input id="wz-welcome" className="wz-input" value={d.welcome_offer} onChange={(e) => set({ welcome_offer: e.target.value })} placeholder="Ex : -10 % sur ton prochain achat (laissez vide pour ne rien offrir)" />
         </Field>
 
-        {d.mode !== "cashback" && (
-          <Field label={`Parrainage : ${unit} offerts au client quand un ami vient pour la 1re fois`} hint={`${BONUS_HELP.referral} 0 = désactivé.`}>
-            <Stepper value={d.referral_bonus} onChange={(n) => set({ referral_bonus: n })} min={0} max={d.mode === "stamps" ? 5 : 1000} label="Bonus de parrainage" />
-          </Field>
-        )}
-
         <div className="wz-row">
           <Toggle checked={d.bonus_multiplier > 1} onChange={(on) => set({ bonus_multiplier: on ? 2 : 1 })} label={d.mode === "stamps" ? "Double tampon pendant vos heures calmes" : "Double gain pendant vos heures calmes"} hint={BONUS_HELP.happy} />
           {d.bonus_multiplier > 1 && (
@@ -172,12 +166,6 @@ export default function StepExtras({
               </div>
             )}
           </div>
-
-          {(d.trade === "sport" || d.lap_times_enabled || d.legacy.track) && (
-            <div className="wz-row">
-              <Toggle checked={d.lap_times_enabled} onChange={(on) => set({ lap_times_enabled: on })} label="Record et classement" hint={BONUS_HELP.lap} />
-            </div>
-          )}
 
           <Field label="Messages maximum par semaine" hint="Le nombre de notifications que vos clients peuvent recevoir de vous. 2 est conseillé, 0 = aucune.">
             <Stepper value={d.max_notifications_per_week} onChange={(n) => set({ max_notifications_per_week: n })} min={0} max={7} label="Messages par semaine" />

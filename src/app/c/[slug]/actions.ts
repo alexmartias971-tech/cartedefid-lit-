@@ -1,6 +1,6 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { normalizePhone, phoneVariants } from "@/lib/format";
@@ -51,6 +51,20 @@ function indicePrenom(prenom: string | null | undefined): { indice: string; lett
   return { indice: `${premiere}${"•".repeat(lettres.length - 2)}${lettres[lettres.length - 1].toLowerCase()}`, lettres: lettres.length };
 }
 
+/**
+ * Gmail ignore les points et ce qui suit « + » : « jean.dupont+2@gmail.com » arrive chez « jeandupont@gmail.com ».
+ * L'adresse est enregistrée sous cette forme, pour qu'une variante ne crée pas une 2e carte (et un 2e cadeau de bienvenue).
+ */
+function emailUnique(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return email;
+  if (domain === "gmail.com" || domain === "googlemail.com") return `${local.split("+")[0].replace(/\./g, "")}@gmail.com`;
+  return email;
+}
+
+/** Le téléphone se souvient de la carte qu'il a déjà créée chez ce commerce (1 an) : pas de 2e carte depuis le même téléphone. */
+const cookieCarte = (businessId: string) => `walty_carte_${businessId.replace(/-/g, "").slice(0, 12)}`;
+
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {
   // Champ piège invisible : seuls les robots le remplissent
@@ -63,11 +77,12 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     String(fd.get("last_name") ?? "")
       .trim()
       .slice(0, 60) || null;
-  const email =
+  const emailTape =
     String(fd.get("email") ?? "")
       .trim()
       .toLowerCase()
       .slice(0, 120) || null;
+  const email = emailTape ? emailUnique(emailTape) : null;
   const phoneRaw = String(fd.get("phone") ?? "").trim();
   const phone = phoneRaw ? normalizePhone(phoneRaw).slice(0, 20) : null;
   const privacy = fd.get("privacy") === "on";
@@ -100,11 +115,20 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     return { error: "Ce programme de fidélité n'est pas disponible." };
   }
 
+  // Ce téléphone a déjà créé une carte ici : on la lui redonne (pas de 2e carte, ni de 2e cadeau de bienvenue)
+  const jar = await cookies();
+  const dejaIci = jar.get(cookieCarte(business.id))?.value ?? "";
+  if (/^[\w-]{16,80}$/.test(dejaIci)) {
+    const { data: sienne } = await supabase.from("cards").select("web_token").eq("web_token", dejaIci).eq("program_id", program.id).maybeSingle();
+    if (sienne) redirect(`/carte/${sienne.web_token}?deja=1`);
+  }
+
   // Déjà inscrit (même email ou même téléphone) ? On renvoie sa carte existante.
   type Existing = { id: string; first_name: string | null; cards: { web_token: string }[] };
   let existing = null as Existing | null;
   for (const [column, value] of [
     ["email", email],
+    ["email", emailTape !== email ? emailTape : null],
     ["phone", phone],
   ] as const) {
     if (existing || !value) continue;
@@ -168,8 +192,22 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     referredBy = referrer?.id ?? null;
   }
 
+  // Même prénom et même nom qu'un client déjà inscrit ici (autre numéro ou autre e-mail) : la carte est créée, mais sans
+  // 2e cadeau de bienvenue ni bonus d'inscription. (Deux vraies personnes du même nom : le commerçant peut offrir à la main.)
+  const { data: homonymes } = await supabase
+    .from("customers")
+    .select("id, first_name, last_name")
+    .eq("business_id", business.id)
+    .neq("id", customerId)
+    // tri grossier par les 2 premières lettres du nom (sans caractère spécial), puis comparaison exacte sans accents
+    .ilike("last_name", `${lastName.slice(0, 2).replace(/[%_\\]/g, "")}%`)
+    .limit(500);
+  const doublon = ((homonymes ?? []) as { first_name: string | null; last_name: string | null }[]).some(
+    (h) => simple(h.first_name) === simple(firstName) && simple(h.last_name) === simple(lastName),
+  );
+
   // Bonus d'inscription : la carte démarre déjà un peu remplie (effet « progrès offert »)
-  const bonus = Math.max(0, program.signup_bonus ?? 0);
+  const bonus = doublon ? 0 : Math.max(0, program.signup_bonus ?? 0);
   const start =
     program.mode === "stamps"
       ? { stamps_count: Math.min(bonus, Math.max(0, program.reward_threshold - 1)) }
@@ -184,8 +222,8 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     .single();
   if (cardError || !card) return { error: "Création de la carte impossible. Réessaie dans un instant." };
 
-  // Offre de bienvenue (valable 30 jours)
-  if (program.welcome_offer) {
+  // Offre de bienvenue (valable 30 jours), une seule fois par personne
+  if (program.welcome_offer && !doublon) {
     await supabase.from("coupons").insert({
       card_id: card.id,
       program_id: program.id,
@@ -200,5 +238,6 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const ua = (await headers()).get("user-agent") ?? "";
   const wallet = { apple: !/Android/i.test(ua), google: !/iPhone|iPad|iPod/i.test(ua) };
   after(() => warmCard(newCardId, wallet));
+  jar.set(cookieCarte(business.id), card.web_token, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 400 * 86400 });
   redirect(`/carte/${card.web_token}`);
 }

@@ -192,7 +192,8 @@ export async function POST(request: Request) {
     max_stamps_per_day: maxStamps,
     // En mode tampons, le bonus d'inscription ne peut pas offrir le cadeau directement
     signup_bonus: mode === "stamps" ? Math.min(signupBonus, Math.max(0, threshold - 1)) : mode === "points" ? signupBonus : 0,
-    referral_bonus: has("referral_bonus") ? clampInt(intOf(s.referral_bonus), 0, 1000, 0) : p.referral_bonus ?? 0,
+    // parrainage arrêté par Walty (26 oct. 2026)
+    referral_bonus: 0,
     bonus_multiplier: multiplier,
     bonus_start_hour: multiplier > 1 ? startHour : null,
     bonus_end_hour: multiplier > 1 ? endHour : null,
@@ -222,11 +223,9 @@ export async function POST(request: Request) {
     businessFields[key] = url;
   }
 
-  // Formule Essentiel : parrainage et lien d'avis Google restent tels quels (Tout compris seulement)
+  // Formule Essentiel : le lien d'avis Google reste tel quel (Tout compris seulement)
   if (plan === "essentiel") {
-    const changed =
-      (has("referral_bonus") && programFields.referral_bonus !== (p.referral_bonus ?? 0)) ||
-      (bHas("google_review_url") && (businessFields.google_review_url ?? null) !== (safeUrl(b.google_review_url) || null));
+    const changed = bHas("google_review_url") && (businessFields.google_review_url ?? null) !== (safeUrl(b.google_review_url) || null);
     if (changed) return planRefused();
   }
 

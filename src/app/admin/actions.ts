@@ -298,13 +298,15 @@ export async function saveBusiness(_prev: FormState, fd: FormData): Promise<Form
     bonus_multiplier: multiplier,
     bonus_start_hour: multiplier > 1 ? startHour : null,
     bonus_end_hour: multiplier > 1 ? endHour : null,
-    referral_bonus: clampInt(int(fd, "referral_bonus"), 0, 1000, 0),
+    // parrainage arrêté par Walty (26 oct. 2026)
+    referral_bonus: 0,
     streak_enabled: fd.get("streak_enabled") === "on",
     streak_goal: clampInt(int(fd, "streak_goal"), 2, 52, 4),
     streak_bonus: clampInt(int(fd, "streak_bonus"), 0, 1000, 1),
     streak_reminder_dow: clampInt(int(fd, "streak_reminder_dow"), 0, 6, 0),
     streak_reminder_hour: clampInt(int(fd, "streak_reminder_hour"), 0, 23, 11),
-    lap_times_enabled: fd.get("lap_times_enabled") === "on",
+    // chrono et classement retirés (27 oct. 2026)
+    lap_times_enabled: false,
   };
   // Disposition de l'éditeur visuel (zones, textes et stickers), vérifiée avant d'être enregistrée
   if (fd.has("card_layout")) {

@@ -274,6 +274,40 @@ export async function prepareGoogleSave(bundle: CardBundle): Promise<{ classSent
   return { classSent, objectSent };
 }
 
+type GoogleObjectSeen = {
+  state?: string;
+  hasUsers?: boolean;
+  loyaltyPoints?: { balance?: { string?: string } };
+  merchantLocations?: unknown[];
+  messages?: { header?: string; body?: string; messageType?: string }[];
+};
+
+/**
+ * Ce que Google sait de la carte et de son modèle (contrôle Walty, sans téléphone Android) : la carte existe-t-elle,
+ * est-elle dans un téléphone (hasUsers), son compteur, ses lieux, ses 5 derniers messages, et l'état du modèle
+ * (reviewStatus : « approved » = ouvert à tous ; sinon le compte Google Wallet est peut-être encore en mode test).
+ */
+export async function googleObjectState(bundle: CardBundle) {
+  const [o, c] = await Promise.all([
+    call<GoogleObjectSeen>("GET", `/loyaltyObject/${googleObjectId(bundle.card.serial_number)}`),
+    call<{ reviewStatus?: string }>("GET", `/loyaltyClass/${googleClassId(bundle.program)}`),
+  ]);
+  const obj = o.data;
+  return {
+    modele: c.data ? (c.data.reviewStatus ?? "inconnu") : "absent",
+    carte: obj
+      ? {
+          etat: obj.state ?? null,
+          dans_un_telephone: obj.hasUsers ?? null,
+          compteur: obj.loyaltyPoints?.balance?.string ?? null,
+          lieux: obj.merchantLocations?.length ?? 0,
+          nb_messages: obj.messages?.length ?? 0,
+          derniers_messages: (obj.messages ?? []).slice(-5).map((m) => ({ titre: m.header, texte: m.body, type: m.messageType })),
+        }
+      : "absente",
+  };
+}
+
 /** Ajoute un message avec notification sur la carte Google (limite Google : ~3 par jour). */
 export async function addGoogleMessage(serial: string, header: string, body: string) {
   const id = googleObjectId(serial);
