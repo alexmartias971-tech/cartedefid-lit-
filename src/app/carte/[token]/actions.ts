@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { EMAIL_OK } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCard } from "@/lib/wallet-sync";
 
@@ -54,4 +55,37 @@ export async function corrigerNom(_prev: NomState, fd: FormData): Promise<NomSta
   after(() => syncCard(cardId));
   revalidatePath(`/carte/${token}`);
   return { ok: true, prenom, nom };
+}
+
+/** ok : le client recevra les bons plans par e-mail. error : un message à corriger. */
+export type EmailState = { ok?: boolean; error?: string; email?: string };
+
+/**
+ * Le client qui n'a pas la carte dans son téléphone laisse son e-mail pour recevoir les bons plans du commerce
+ * (relance sans Wallet, 29 oct. 2026, lib/email.ts). Case à cocher obligatoire, jamais cochée d'avance : c'est son accord
+ * pour les bons plans de CE commerce, par e-mail et sur sa carte. Le lien de la carte (web_token) est son accès.
+ */
+export async function recevoirEmails(_prev: EmailState, fd: FormData): Promise<EmailState> {
+  const token = String(fd.get("token") ?? "");
+  if (!/^[0-9a-f]{32}$/.test(token)) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
+  const email = String(fd.get("email") ?? "").trim().toLowerCase().slice(0, 254);
+  if (!EMAIL_OK.test(email)) return { error: "Vérifie ton adresse e-mail (exemple : prenom@gmail.com)." };
+  if (fd.get("accord") !== "on") return { error: "Coche la case pour recevoir les bons plans par e-mail." };
+  try {
+    const supabase = createAdminClient();
+    const { data: card } = await supabase.from("cards").select("customer_id").eq("web_token", token).maybeSingle();
+    if (!card) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
+    const { error } = await supabase.from("email_optins").upsert(
+      { customer_id: card.customer_id, email, source: "carte", consented_at: new Date().toISOString(), unsubscribed_at: null },
+      { onConflict: "customer_id" },
+    );
+    if (error) throw new Error(error.message);
+    // son accord pour les bons plans de ce commerce (la case qu'il n'avait peut-être pas cochée à l'inscription)
+    await supabase.from("customers").update({ marketing_optin: true }).eq("id", card.customer_id);
+  } catch (err) {
+    console.error("[recevoirEmails]", (err as Error).message);
+    return { error: "L'enregistrement n'a pas marché. Réessaie dans un instant." };
+  }
+  revalidatePath(`/carte/${token}`);
+  return { ok: true, email };
 }

@@ -13,7 +13,7 @@ import { warmCard } from "@/lib/wallet-warm";
  */
 export type SignupState = { error?: string; retrouver?: { indice: string; lettres: number } };
 // v4 (25 oct. 2026) : le nom est demandé avec le prénom ; v3 (23 oct.) : plus de date de naissance (page confidentialité à jour)
-const POLICY_VERSION = "v4";
+const POLICY_VERSION = "v5"; // v5 (29 oct. 2026) : les bons plans aussi par e-mail
 
 /** Prénom sans accents, majuscules, espaces ni tirets : « Jean-Éric » → « jeaneric ». */
 const simple = (s: string | null | undefined) =>
@@ -177,6 +177,14 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
         policy_version: POLICY_VERSION,
       },
     ]);
+    // Inscrit avec son e-mail et d'accord pour les bons plans (« sur ma carte ou par e-mail ») : s'il n'ajoute pas la carte
+    // à son téléphone, les relances lui arrivent par e-mail (lib/email.ts). Une panne ici ne bloque pas l'inscription.
+    if (marketing && emailTape) {
+      const { error: optinError } = await supabase
+        .from("email_optins")
+        .upsert({ customer_id: customerId, email: emailTape, source: "inscription" }, { onConflict: "customer_id" });
+      if (optinError) console.error("[inscription email_optins]", optinError.message);
+    }
   }
 
   // Parrainage : le lien d'un ami contient son code (?p=CODE)

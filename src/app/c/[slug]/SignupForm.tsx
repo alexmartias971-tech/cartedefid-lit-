@@ -161,7 +161,7 @@ export default function SignupForm({
           <input type="checkbox" name="marketing" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} />
           <Box />
           <span>
-            Je veux recevoir les bons plans de {businessName} sur ma carte. Je peux arrêter à tout moment.
+            Je veux recevoir les bons plans de {businessName} sur ma carte ou par e-mail. Je peux arrêter à tout moment.
           </span>
         </label>
         {leaderboard && (

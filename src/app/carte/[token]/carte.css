@@ -75,6 +75,8 @@
 .ws .wc-badge-link:focus-visible { outline: 3px solid var(--ws-ring); outline-offset: 3px; }
 .ws .wc-badge { display: block; width: auto; height: 50px; }
 .ws .wc-badges-solo .wc-badge { height: 64px; }
+/* Page ouverte dans Instagram, Facebook, TikTok… : comment rouvrir dans Chrome ou Safari */
+.ws .wc-inapp { margin-top: 10px; font-size: 13.5px; font-weight: 700; color: var(--ws-sheet-ink); text-wrap: balance; }
 .ws .wc-badge-text {
   display: inline-flex; align-items: center; gap: 10px; height: 54px; padding: 0 22px; border-radius: 14px;
   background: #000; color: #fff; font-weight: 700; font-size: 17px; border: 1px solid rgba(255, 255, 255, 0.35);

@@ -1,6 +1,7 @@
 import "server-only";
 import { pushToAppleDevices } from "@/lib/apple/push";
 import { loadCardBundle } from "@/lib/cards";
+import { relanceParEmail } from "@/lib/email";
 import { isGoogleConfigured } from "@/lib/env";
 import { addGoogleMessage, upsertGoogleObject } from "@/lib/google/wallet";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -69,9 +70,13 @@ export async function syncCard(cardId: string, googleMessage?: GoogleMessage, op
   }
 }
 
-/** Même chose pour une liste de cartes (notifications, changement de design). */
+/**
+ * Même chose pour une liste de cartes (notifications, changement de design).
+ * Avec un message (relance : message du commerçant, offre, « Tu nous manques », défi), les clients qui n'ont pas la carte
+ * dans leur téléphone le reçoivent par e-mail s'ils l'ont accepté (lib/email.ts).
+ */
 export async function syncCards(bundles: CardBundle[], googleMessage?: GoogleMessage) {
-  const results = { apple: 0, google: 0, errors: 0 };
+  const results = { apple: 0, google: 0, email: 0, errors: 0 };
   // Images d'abord, seulement pour les cartes déjà dans un Wallet (ce sont elles que les téléphones vont redemander),
   // 3 à la fois (les cartes au même point partagent les mêmes images), 6 s au plus : l'envoi n'attend jamais longtemps.
   const inWallet = bundles.filter((b) => b.card.wallet_platform === "apple" || b.card.google_saved);
@@ -103,6 +108,14 @@ export async function syncCards(bundles: CardBundle[], googleMessage?: GoogleMes
         console.error("[syncCards google]", s.reason);
       }
     });
+  }
+  if (googleMessage) {
+    try {
+      results.email = await relanceParEmail(bundles, googleMessage);
+    } catch (err) {
+      results.errors++;
+      console.error("[syncCards email]", (err as Error).message);
+    }
   }
   return results;
 }

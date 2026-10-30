@@ -130,6 +130,17 @@ export async function POST(request: Request) {
   };
   if (program.mode !== "stamps") return reply({ ok: true, kind: "other_mode", ...base });
 
+  // La carte est-elle dans le téléphone du client (iPhone inscrit, ou bouton Google touché) ? Sinon, la caisse propose au
+  // commerçant de le rappeler au client (relance sans Wallet, 29 oct. 2026). En cas de doute : « oui » (rien ne s'affiche).
+  const dansTelephone: Promise<boolean> = card.google_saved
+    ? Promise.resolve(true)
+    : Promise.resolve(
+        createAdminClient().from("apple_device_registrations").select("card_id", { count: "exact", head: true }).eq("card_id", card.id),
+      ).then(
+        ({ count, error }) => (error ? true : (count ?? 0) > 0),
+        () => true,
+      );
+
   let visit: VisitInfo | null = null;
   try {
     visit = await visitInfo(bundle);
@@ -140,7 +151,7 @@ export async function POST(request: Request) {
   if (!visit.program_active) return reply({ ok: true, kind: "paused", ...base, visit });
   if (state.rewardReady) return reply({ ok: true, kind: "reward", ...base, visit });
   if (visit.limit_reached) return reply({ ok: true, kind: "limit", ...base, visit });
-  if (visit.today_count > 0 && !force) return reply({ ok: true, kind: "today", ...base, visit });
+  if (visit.today_count > 0 && !force) return reply({ ok: true, kind: "today", ...base, visit, in_wallet: await dansTelephone });
 
   const { data, error } = await createAdminClient().rpc("add_stamp", { p_serial: serial, p_scanner_id: session.scannerId });
   if (error) {
@@ -169,5 +180,6 @@ export async function POST(request: Request) {
     reward_ready: !!result.reward_ready,
     visit,
     done,
+    in_wallet: await dansTelephone,
   });
 }

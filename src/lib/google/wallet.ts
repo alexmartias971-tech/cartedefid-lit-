@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { JWT } from "google-auth-library";
 import { appUrl, publicUrl, requireBase64Env, requireEnv, signupUrl } from "@/lib/env";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, googleFields, resolveSlots, streakSentence } from "@/lib/card-state";
-import type { Business, CardBundle, Program } from "@/lib/types";
+import type { Business, Card, CardBundle, CatalogReward, Coupon, Customer, Program, Tier } from "@/lib/types";
 import { hashOf, inBackground, storageGet, storagePut } from "@/lib/wallet-cache";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
@@ -306,6 +306,151 @@ export async function googleObjectState(bundle: CardBundle) {
         }
       : "absente",
   };
+}
+
+/** Résultat d'un essai envoyé à Google : accepté ou refusé, et ce que Google a gardé. */
+export type EssaiGoogle = { option: string; accepte: boolean; detail: string };
+
+const court = (err: unknown) => ((err as Error)?.message ?? String(err)).replace(/^Google Wallet /, "").slice(0, 240);
+
+type Variante = {
+  option: string;
+  program?: Partial<Program>;
+  card?: Partial<Card>;
+  business?: Partial<Business>;
+  customer?: Partial<Customer>;
+  tiers?: Tier[];
+  catalog?: CatalogReward[];
+  coupons?: Coupon[];
+};
+
+/**
+ * Essai de toutes les options sur Google Wallet, pour de vrai (contrôle Walty, 29 oct. 2026 : vérifier Android sans
+ * téléphone Android). Chaque option part chez Google sur un modèle et des cartes d'ESSAI à part (« essai_walty ») que
+ * personne n'a dans son téléphone : aucune vraie carte n'est touchée, aucun client n'est prévenu. Google accepte ou
+ * refuse chaque option, puis on relit ce qu'il a gardé. À la fin : un passage en caisse avec notification
+ * (NOTIFY_ON_UPDATE), puis un message avec notification, envoyés tels quels pour voir la réponse de Google.
+ * `logoBusinessId` : un commerce qui a un logo (pour l'essai « nom masqué + logo large »).
+ */
+export async function essaiGoogle(base: CardBundle, logoBusinessId: string | null): Promise<EssaiGoogle[]> {
+  const T = new Date().toISOString();
+  const pid = base.program.id;
+  const classId = `${issuerId()}.programme_essai_walty`;
+  const objectId = (n: number) => `${issuerId()}.carte_essai_walty_${n}`;
+  const tiers: Tier[] = [
+    { id: "essai-t0", program_id: pid, name: "Vacancier", min_value: 0, perk: null, color: null, image_url: null, sort: 0 },
+    { id: "essai-t1", program_id: pid, name: "Habitué", min_value: 10, perk: "-5 % sur tout", color: "#0F4A5C", image_url: null, sort: 1 },
+  ];
+  const catalog: CatalogReward[] = [
+    { id: "essai-r1", program_id: pid, name: "Un café", cost: 50, is_active: true, sort: 0 },
+    { id: "essai-r2", program_id: pid, name: "Un brunch", cost: 200, is_active: true, sort: 1 },
+  ];
+  const offre: Coupon = {
+    id: "essai-k1", card_id: base.card.id, program_id: pid, title: "-20 % ce week-end", kind: "manual",
+    status: "active", expires_at: null, used_at: null, created_at: T,
+  };
+  // le lundi de la semaine en cours, heure de Guadeloupe (comme la série en vrai)
+  const gp = new Date(Date.now() - 4 * 3600e3);
+  const lundi = new Date(Date.UTC(gp.getUTCFullYear(), gp.getUTCMonth(), gp.getUTCDate() - ((gp.getUTCDay() + 6) % 7))).toISOString().slice(0, 10);
+  const long = "Texte long avec accents, émojis 🎉☕🌴 et retours à la ligne.\n".repeat(30);
+  const variantes: Variante[] = [
+    { option: "La carte telle qu'elle est" },
+    { option: "Cadeau prêt", card: { stamps_count: base.program.reward_threshold } },
+    { option: "Mode points + catalogue", program: { mode: "points" }, card: { points_balance: 80, lifetime_points: 80 }, catalog },
+    { option: "Mode cagnotte", program: { mode: "cashback", cashback_percent: 5 }, card: { cashback_balance: 4.5, lifetime_spent: 90 } },
+    { option: "Niveaux", program: { tiers_enabled: true }, card: { lifetime_visits: 12, tier_id: "essai-t1" }, tiers },
+    { option: "Heures boostées ×2", program: { bonus_multiplier: 2, bonus_start_hour: 14, bonus_end_hour: 16 } },
+    {
+      option: "Bienvenue + tampons offerts",
+      program: { welcome_offer: "1 boule de glace offerte", signup_bonus: 2 },
+      coupons: [{ ...offre, title: "1 boule de glace offerte", kind: "welcome" }],
+    },
+    { option: "Défi de la semaine", program: { streak_enabled: true }, card: { streak_count: 3, streak_best: 3, streak_week: lundi } },
+    { option: "Offre ponctuelle", coupons: [offre] },
+    { option: "Message du commerçant", card: { last_message: "Ce week-end : -20 % sur tout !" } },
+    { option: "Notification à 100 m", business: { latitude: 16.221172, longitude: -61.395461 } },
+    { option: "Avis Google + Instagram", business: { google_review_url: "https://g.page/r/essai/review", instagram_url: "https://instagram.com/walty" } },
+    {
+      option: "Textes longs et émojis",
+      program: { back_text: long, reward_description: "Une boisson ou une glace au choix offerte 🍧" },
+      customer: { first_name: "Marie-Héloïse 🌺" },
+    },
+    { option: "Nom de commerce très long", business: { name: "Le Snack Kréyol de la Plage de Sainte-Anne" } },
+    ...(logoBusinessId
+      ? [{ option: "Nom masqué + logo large", program: { show_logo_text: false }, business: { id: logoBusinessId, logo_url: "essai" } }]
+      : []),
+  ];
+
+  const out: EssaiGoogle[] = [];
+  let classeEnvoyee = "";
+  for (const [i, v] of variantes.entries()) {
+    const bundle: CardBundle = {
+      program: { ...base.program, ...v.program },
+      business: { ...base.business, ...v.business },
+      card: { ...base.card, ...v.card },
+      customer: { ...base.customer, ...v.customer },
+      tiers: v.tiers ?? [],
+      catalog: v.catalog ?? [],
+      coupons: v.coupons ?? [],
+    };
+    const cBody = { ...classBody(bundle.program, bundle.business), id: classId };
+    const oBody = { ...objectBody(bundle), id: objectId(i + 1), classId };
+    try {
+      // le modèle n'est renvoyé que s'il change d'une option à l'autre
+      const cHash = hashOf(cBody);
+      if (cHash !== classeEnvoyee) {
+        const put = await call("PUT", `/loyaltyClass/${classId}`, cBody);
+        if (put.status === 404) await call("POST", "/loyaltyClass", cBody);
+        classeEnvoyee = cHash;
+      }
+      const put = await call("PUT", `/loyaltyObject/${oBody.id}`, oBody);
+      if (put.status === 404) await call("POST", "/loyaltyObject", oBody);
+      const lu = await call<
+        GoogleObjectSeen & {
+          secondaryLoyaltyPoints?: { balance?: { string?: string } };
+          textModulesData?: unknown[];
+          linksModuleData?: { uris?: unknown[] };
+        }
+      >("GET", `/loyaltyObject/${oBody.id}`);
+      const o = lu.data;
+      out.push({
+        option: v.option,
+        accepte: true,
+        detail: o
+          ? `compteur ${o.loyaltyPoints?.balance?.string ?? "?"}${o.secondaryLoyaltyPoints ? ` | ${o.secondaryLoyaltyPoints.balance?.string ?? "?"}` : ""}, ` +
+            `${o.textModulesData?.length ?? 0} bloc(s) de texte, ${o.linksModuleData?.uris?.length ?? 0} lien(s), ${o.merchantLocations?.length ?? 0} lieu(x)`
+          : "acceptée, mais introuvable à la relecture",
+      });
+    } catch (err) {
+      out.push({ option: v.option, accepte: false, detail: court(err) });
+    }
+  }
+
+  // Un passage en caisse sur une carte Android : le compteur change, Google prévient le téléphone
+  const passage = { ...base, tiers: [], catalog: [], coupons: [], card: { ...base.card, stamps_count: base.card.stamps_count + 1 } };
+  try {
+    await call("PUT", `/loyaltyObject/${objectId(1)}`, { ...objectBody(passage), id: objectId(1), classId, notifyPreference: "NOTIFY_ON_UPDATE" });
+    out.push({ option: "Passage en caisse avec notification", accepte: true, detail: "Google accepte la mise à jour avec notification (NOTIFY_ON_UPDATE)" });
+  } catch (err) {
+    out.push({ option: "Passage en caisse avec notification", accepte: false, detail: court(err) });
+  }
+  // Un message du commerçant (notifications, « Tu nous manques », avis, défi) : il s'affiche avec une notification
+  try {
+    await call("POST", `/loyaltyObject/${objectId(1)}/addMessage`, {
+      message: { id: `msg_essai_${Date.now()}`, header: base.business.name.slice(0, 60), body: "Essai Walty : message avec notification", messageType: "TEXT_AND_NOTIFY" },
+    });
+    out.push({ option: "Message avec notification", accepte: true, detail: "Google accepte le message (TEXT_AND_NOTIFY)" });
+  } catch (err) {
+    out.push({ option: "Message avec notification", accepte: false, detail: court(err) });
+  }
+  // L'état du modèle d'essai, créé à l'instant : « approved » = Google valide tout seul les nouveaux modèles
+  try {
+    const c = await call<{ reviewStatus?: string }>("GET", `/loyaltyClass/${classId}`);
+    out.push({ option: "Modèle d'essai chez Google", accepte: c.status < 400, detail: `état : ${c.data?.reviewStatus ?? "inconnu"}` });
+  } catch (err) {
+    out.push({ option: "Modèle d'essai chez Google", accepte: false, detail: court(err) });
+  }
+  return out;
 }
 
 /** Ajoute un message avec notification sur la carte Google (limite Google : ~3 par jour). */

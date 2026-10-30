@@ -7,7 +7,7 @@ export default function Confidentialite() {
   return (
     <main className="max-w-2xl mx-auto p-6 space-y-4 leading-relaxed">
       <h1 className="text-3xl font-bold">Tes données</h1>
-      <p className="text-sm text-gray-500">Version v3 · 23 octobre 2026</p>
+      <p className="text-sm text-gray-500">Version v5 · 29 octobre 2026</p>
 
       <h2 className="text-xl font-semibold">Qui traite tes données ?</h2>
       <p>
@@ -28,12 +28,14 @@ export default function Confidentialite() {
       <p>
         Faire fonctionner ta carte et tes récompenses, et t’envoyer les messages de service (« +1 tampon », « ton cadeau
         est prêt »). Si tu as coché la case, t’envoyer aussi les offres du commerce par notification : leur nombre est
-        limité par la formule du commerce, et la case n’est jamais cochée d’avance.
+        limité par la formule du commerce, et la case n’est jamais cochée d’avance. Si ta carte n’est pas dans ton
+        téléphone et que tu as donné ton e-mail en cochant cette case, ces offres t’arrivent par e-mail.
       </p>
 
       <h2 className="text-xl font-semibold">Pour ne plus recevoir les offres</h2>
       <p>
-        Demande-le au commerce ou écris à contact@walty.fr : tu continues à recevoir les messages de ta carte. Tu peux
+        Demande-le au commerce ou écris à contact@walty.fr : tu continues à recevoir les messages de ta carte. Pour les
+        e-mails, un lien « Ne plus recevoir ces e-mails » est en bas de chacun. Tu peux
         aussi couper les notifications dans les réglages de la carte, dans ton Wallet (cela coupe aussi les messages de
         service), ou supprimer la carte de ton téléphone.
       </p>
@@ -44,7 +46,8 @@ export default function Confidentialite() {
       <h2 className="text-xl font-semibold">Où ?</h2>
       <p>
         Les données sont stockées dans l’Union européenne (Irlande, chez Supabase). Le service tourne chez Vercel, et
-        Apple ou Google affichent la carte dans ton Wallet. Tes données ne sont jamais vendues.
+        Apple ou Google affichent la carte dans ton Wallet. Les e-mails partent par Brevo (France, serveurs dans l’Union
+        européenne). Tes données ne sont jamais vendues.
       </p>
 
       <h2 className="text-xl font-semibold">Tes droits</h2>

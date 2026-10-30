@@ -10,6 +10,7 @@ import type { CardBundle, Program } from "@/lib/types";
 // Base commune avec la page d'inscription (fond, feuille, bouton, pied de page), puis ce qui est propre à la carte
 import "@/app/c/[slug]/signup.css";
 import "./carte.css";
+import EmailBonsPlans from "./EmailBonsPlans";
 import MonNom from "./MonNom";
 
 /** Le logo du commerce, présenté selon son image (fond propre, détouré…), sans cadre blanc inutile. */
@@ -107,6 +108,9 @@ export default function CardView({
   token,
   deja,
   isAndroid,
+  inApp = null,
+  sansWallet = false,
+  emailAbonne = null,
   apple,
   google,
   giftQr,
@@ -118,6 +122,12 @@ export default function CardView({
   /** Le client avait déjà une carte (retrouvée à l'inscription). */
   deja: boolean;
   isAndroid: boolean;
+  /** Page ouverte dans le navigateur d'une appli (Instagram, Facebook, TikTok…) : on aide à rouvrir dans Chrome ou Safari. */
+  inApp?: "android" | "ios" | null;
+  /** La carte n'est dans aucun téléphone (ni iPhone, ni Google) : on propose les bons plans par e-mail. */
+  sansWallet?: boolean;
+  /** Le client reçoit déjà les bons plans par e-mail : son adresse masquée (« al•••@gmail.com »). */
+  emailAbonne?: string | null;
   /** Afficher le badge Apple Wallet / Google Wallet. */
   apple: boolean;
   google: boolean;
@@ -232,7 +242,7 @@ export default function CardView({
         {wallet && (
           <section className="wk-panel wk-wallet ws-rise" style={{ "--d": "80ms" } as CSSProperties} aria-label="Ajouter la carte au téléphone">
             <p className="wk-wallet-title">{isNew ? "Garde-la dans ton téléphone en 1 touche" : "Ajoute-la à ton téléphone"}</p>
-            <WalletButtons token={token} showApple={apple} showGoogle={google} />
+            <WalletButtons token={token} showApple={apple} showGoogle={google} inApp={inApp} base={shareBase} />
             <p className="wk-wallet-note">Gratuit, sans appli à télécharger. Elle se met à jour toute seule.</p>
           </section>
         )}
@@ -386,6 +396,8 @@ export default function CardView({
             )}
           </section>
         )}
+
+        {sansWallet && <EmailBonsPlans token={token} commerce={business.name} abonne={emailAbonne} />}
 
         <MonNom token={token} prenom={customer.first_name} nom={customer.last_name} variante="panneau" />
 
