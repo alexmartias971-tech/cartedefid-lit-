@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Ces modules tournent uniquement côté serveur (fabrication des cartes Apple, images)
-  serverExternalPackages: ["passkit-generator", "sharp"],
+  // Ces modules tournent uniquement côté serveur (fabrication des cartes Apple, images, envoi des e-mails par la boîte OVH)
+  serverExternalPackages: ["passkit-generator", "sharp", "nodemailer"],
   experimental: {
     // Permet d'envoyer un logo jusqu'à 4 Mo depuis le tableau de bord
     serverActions: { bodySizeLimit: "4mb" },

@@ -1,4 +1,5 @@
 import "server-only";
+import nodemailer from "nodemailer";
 import { computeCardState } from "@/lib/card-state";
 import { publicUrl } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -11,11 +12,27 @@ import type { CardBundle } from "@/lib/types";
  * l'inscription ou sur la page de leur carte), qui acceptent toujours les bons plans (marketing_optin) et ne se sont pas
  * désabonnés. Les messages de service (« +1 tampon ») ne partent jamais par e-mail : seulement les relances envoyées à
  * plusieurs cartes (message du commerçant, offre, « Tu nous manques », rappel du défi), voir syncCards.
- * Envoi par Brevo (société française, serveurs en Europe) : BREVO_API_KEY et EMAIL_FROM dans Vercel. Sans eux, rien ne part.
+ *
+ * Deux façons d'envoyer (réglages dans Vercel ; sans eux, rien ne part) :
+ *  - la boîte e-mail OVH de Walty (choix d'Alexandre, 29 oct. 2026) : SMTP_USER + SMTP_PASSWORD (+ SMTP_HOST, par défaut
+ *    ssl0.ovh.net, et SMTP_PORT, par défaut 465). L'expéditeur affiché est le commerce, l'adresse est cette boîte (OVH refuse
+ *    toute autre adresse). OVH accepte environ 200 e-mails par heure et par boîte, et peut bloquer une boîte qui dépasse :
+ *    on s'arrête à SMTP_MAX_HEURE (150) e-mails par heure, les suivants attendent la relance d'après ;
+ *  - Brevo, pour les gros volumes : BREVO_API_KEY + EMAIL_FROM. S'il est réglé, il passe avant OVH.
  */
-export function isEmailConfigured(): boolean {
-  return Boolean(process.env.BREVO_API_KEY && process.env.EMAIL_FROM);
+type Fournisseur = "brevo" | "smtp";
+function fournisseur(): Fournisseur | null {
+  if (process.env.BREVO_API_KEY && process.env.EMAIL_FROM) return "brevo";
+  if (process.env.SMTP_USER && process.env.SMTP_PASSWORD) return "smtp";
+  return null;
 }
+
+export function isEmailConfigured(): boolean {
+  return fournisseur() !== null;
+}
+
+/** Au plus 150 e-mails par heure par la boîte OVH (limite d'OVH : environ 200, une boîte qui dépasse peut être bloquée). */
+export const SMTP_MAX_HEURE = 150;
 
 export type MessageEmail = { header: string; body: string };
 type Optin = { customer_id: string; email: string };
@@ -86,10 +103,46 @@ Tu reçois cet e-mail parce que tu as accepté de recevoir les bons plans de ${e
   return { sujet, html, texte: brut };
 }
 
-/** Un e-mail par Brevo. true s'il est accepté. */
-async function envoyer(email: string, b: CardBundle, message: MessageEmail): Promise<boolean> {
+/** La connexion à la boîte OVH, ouverte pour un envoi groupé puis refermée. */
+function boiteOvh() {
+  const port = Number(process.env.SMTP_PORT || 465);
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "ssl0.ovh.net",
+    port,
+    secure: port === 465,
+    auth: { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASSWORD! },
+    pool: true, // une seule connexion pour tout le lot
+    maxConnections: 1,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+  });
+}
+type BoiteOvh = ReturnType<typeof boiteOvh>;
+
+/** Un e-mail, par Brevo ou par la boîte OVH. true s'il est accepté. */
+async function envoyer(email: string, b: CardBundle, message: MessageEmail, ovh: BoiteOvh | null): Promise<boolean> {
   const { sujet, html, texte } = emailContenu(b, message);
   const replyTo = b.business.email && EMAIL_OK.test(b.business.email) ? { email: b.business.email, name: b.business.name.slice(0, 70) } : null;
+  if (ovh) {
+    try {
+      await ovh.sendMail({
+        from: { name: b.business.name.slice(0, 70), address: process.env.SMTP_USER! },
+        to: { name: b.customer.first_name.slice(0, 70), address: email },
+        ...(replyTo ? { replyTo: { name: replyTo.name, address: replyTo.email } } : {}),
+        subject: sujet,
+        html,
+        text: texte,
+        // « Se désabonner » en un clic dans Gmail, Outlook… (POST vers /api/email/desabo)
+        list: { unsubscribe: lienDesabo(b.card.web_token) },
+        headers: { "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+      });
+      return true;
+    } catch (err) {
+      console.error("[email ovh]", (err as Error).message.slice(0, 300));
+      return false;
+    }
+  }
   const res = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: { "api-key": process.env.BREVO_API_KEY!, "content-type": "application/json", accept: "application/json" },
@@ -115,7 +168,8 @@ async function envoyer(email: string, b: CardBundle, message: MessageEmail): Pro
  * Renvoie le nombre d'e-mails acceptés par Brevo. Une panne ne bloque jamais l'envoi Wallet (appelé après lui).
  */
 export async function relanceParEmail(bundles: CardBundle[], message: MessageEmail): Promise<number> {
-  if (!isEmailConfigured() || bundles.length === 0) return 0;
+  const par = fournisseur();
+  if (!par || bundles.length === 0) return 0;
   const supabase = createAdminClient();
   const [optins, regs] = await Promise.all([
     supabase.from("email_optins").select("customer_id, email").in("customer_id", [...new Set(bundles.map((b) => b.customer.id))]).is("unsubscribed_at", null),
@@ -126,24 +180,49 @@ export async function relanceParEmail(bundles: CardBundle[], message: MessageEma
     console.error("[email]", erreur.message);
     return 0;
   }
-  const cibles = destinatairesEmail(
+  let cibles = destinatairesEmail(
     bundles,
     (optins.data ?? []) as Optin[],
     new Set(((regs.data ?? []) as { card_id: string }[]).map((r) => r.card_id)),
   );
-  let envoyes = 0;
-  // 5 à la fois (Brevo gratuit : 300 e-mails par jour au total)
-  for (let i = 0; i < cibles.length; i += 5) {
-    const lot = cibles.slice(i, i + 5);
-    const res = await Promise.allSettled(lot.map((c) => envoyer(c.email, c.bundle, message)));
-    const partis = lot.filter((_, k) => res[k].status === "fulfilled" && (res[k] as PromiseFulfilledResult<boolean>).value);
-    envoyes += partis.length;
-    if (partis.length) {
-      await supabase
-        .from("email_optins")
-        .update({ last_sent_at: new Date().toISOString() })
-        .in("customer_id", partis.map((c) => c.bundle.customer.id));
+  if (cibles.length === 0) return 0;
+
+  // Boîte OVH : pas plus de SMTP_MAX_HEURE e-mails sur la dernière heure (les e-mails partis sont notés dans last_sent_at)
+  let ovh: BoiteOvh | null = null;
+  if (par === "smtp") {
+    const { count, error: e } = await supabase
+      .from("email_optins")
+      .select("customer_id", { count: "exact", head: true })
+      .gt("last_sent_at", new Date(Date.now() - 3600_000).toISOString());
+    if (e) {
+      console.error("[email]", e.message);
+      return 0;
     }
+    const reste = Math.max(0, SMTP_MAX_HEURE - (count ?? 0));
+    if (reste < cibles.length) console.error(`[email ovh] limite horaire : ${cibles.length - reste} e-mail(s) non envoyé(s)`);
+    cibles = cibles.slice(0, reste);
+    if (cibles.length === 0) return 0;
+    ovh = boiteOvh();
+  }
+
+  let envoyes = 0;
+  // Brevo : 5 à la fois (gratuit : 300 e-mails par jour au total). OVH : un par un, sur la même connexion.
+  const parLot = ovh ? 1 : 5;
+  try {
+    for (let i = 0; i < cibles.length; i += parLot) {
+      const lot = cibles.slice(i, i + parLot);
+      const res = await Promise.allSettled(lot.map((c) => envoyer(c.email, c.bundle, message, ovh)));
+      const partis = lot.filter((_, k) => res[k].status === "fulfilled" && (res[k] as PromiseFulfilledResult<boolean>).value);
+      envoyes += partis.length;
+      if (partis.length) {
+        await supabase
+          .from("email_optins")
+          .update({ last_sent_at: new Date().toISOString() })
+          .in("customer_id", partis.map((c) => c.bundle.customer.id));
+      }
+    }
+  } finally {
+    ovh?.close();
   }
   return envoyes;
 }
