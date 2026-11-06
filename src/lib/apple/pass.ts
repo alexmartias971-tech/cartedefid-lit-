@@ -6,6 +6,7 @@ import type { CardBundle } from "@/lib/types";
 import { ByteCache, hashOf, once } from "@/lib/wallet-cache";
 import { ensurePassImages, getPassImages, imageKeys, type ImageSource } from "@/lib/wallet-images";
 import type { PassImageFlags } from "@/lib/apple/pass-images";
+import { avecLieux, lieuxDe } from "@/lib/lieux";
 
 /**
  * Fabrique le fichier .pkpass (la carte Apple Wallet) d'un client.
@@ -53,19 +54,12 @@ export function describeApplePass(bundle: CardBundle): ApplePassDescription {
 
   // La carte apparaît sur l'écran verrouillé quand le client passe près du commerce (demande d'Alexandre, 26 oct. 2026 : à moins de
   // 100 m). maxDistance est un plafond : l'iPhone prend le plus petit entre lui et sa propre distance pour une carte de fidélité.
-  const locations =
-    business.latitude != null && business.longitude != null
-      ? {
-          locations: [
-            {
-              latitude: Number(business.latitude),
-              longitude: Number(business.longitude),
-              relevantText: business.relevant_text || `Tu es près de ${business.name} ! Montre ta carte.`,
-            },
-          ],
-          maxDistance: 100,
-        }
-      : {};
+  // Plusieurs emplacements (6 nov. 2026, IFC et ses deux roulottes) : un lieu par emplacement, le même message (lib/lieux.ts).
+  const texteProche = business.relevant_text || `Tu es près de ${business.name} ! Montre ta carte.`;
+  const lieux = lieuxDe(business);
+  const locations = lieux.length
+    ? { locations: lieux.map((l) => ({ latitude: l.latitude, longitude: l.longitude, relevantText: texteProche })), maxDistance: 100 }
+    : {};
 
   const props = {
     formatVersion: 1,
@@ -323,7 +317,8 @@ export type ApplePassResult = {
 };
 
 /** Le fichier .pkpass d'une carte, le plus vite possible (cache), toujours à jour (empreinte du contenu). */
-export async function getApplePass(bundle: CardBundle): Promise<ApplePassResult> {
+export async function getApplePass(bundle0: CardBundle): Promise<ApplePassResult> {
+  const bundle = await avecLieux(bundle0);
   const d = describeApplePass(bundle);
   // L'empreinte couvre tout le contenu de la carte + ses images + le certificat utilisé pour signer
   const key = hashOf({

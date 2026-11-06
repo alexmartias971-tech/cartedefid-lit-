@@ -5,6 +5,7 @@ import { appUrl, publicUrl, requireBase64Env, requireEnv, signupUrl } from "@/li
 import { computeCardState, describeProgram, designFromProgram, fieldLabels, googleFields, resolveSlots, streakSentence } from "@/lib/card-state";
 import type { Business, Card, CardBundle, CatalogReward, Coupon, Customer, Program, Tier } from "@/lib/types";
 import { hashOf, inBackground, storageGet, storagePut } from "@/lib/wallet-cache";
+import { avecLieux, avecLieuxCommerce, lieuxDe } from "@/lib/lieux";
 
 const API = "https://walletobjects.googleapis.com/walletobjects/v1";
 
@@ -89,7 +90,8 @@ function classBody(program: Program, business: Business) {
 }
 
 /** Crée ou met à jour la "classe" Google (le modèle de carte d'une entreprise). */
-export async function upsertGoogleClass(program: Program, business: Business) {
+export async function upsertGoogleClass(program: Program, business0: Business) {
+  const business = await avecLieuxCommerce(business0);
   const id = googleClassId(program);
   const body = classBody(program, business);
   const existing = await call("GET", `/loyaltyClass/${id}`);
@@ -179,11 +181,11 @@ function objectBody({ card, customer, program, business, tiers, catalog, coupons
   };
 }
 
-/** Le commerce sur la carte Google (classe et carte de chaque client), s'il a sa position : Google prévient le client qui passe à côté. */
+/** Le commerce sur la carte Google (classe et carte de chaque client), s'il a sa position : Google prévient le client qui passe à côté.
+ *  Plusieurs emplacements (6 nov. 2026, les deux roulottes d'IFC) : un lieu par emplacement (lib/lieux.ts). */
 function merchantLocations(business: Business) {
-  return business.latitude != null && business.longitude != null
-    ? { merchantLocations: [{ latitude: Number(business.latitude), longitude: Number(business.longitude) }] }
-    : {};
+  const lieux = lieuxDe(business);
+  return lieux.length ? { merchantLocations: lieux.map((l) => ({ latitude: l.latitude, longitude: l.longitude })) } : {};
 }
 
 /** Découpe des paragraphes en blocs de texte Google de 500 caractères au plus (« (suite) » pour les blocs suivants). */
@@ -210,7 +212,8 @@ function textBlocks(id: string, header: string, parts: string[]): { id: string; 
  * comme l'iPhone après un passage (notifyPreference : pour cette requête seulement, 3 par 24 h au plus).
  * Si Google refuse la notification (quota), la carte est quand même mise à jour, sans notification.
  */
-export async function upsertGoogleObject(bundle: CardBundle, opts: { notify?: boolean } = {}) {
+export async function upsertGoogleObject(bundle0: CardBundle, opts: { notify?: boolean } = {}) {
+  const bundle = await avecLieux(bundle0);
   const body = objectBody(bundle);
   const existing = await call("GET", `/loyaltyObject/${body.id}`);
   if (existing.status === 404) {
@@ -235,7 +238,8 @@ export async function upsertGoogleObject(bundle: CardBundle, opts: { notify?: bo
  *  - carte nouvelle : on la crée directement (1 appel au lieu de 2), « existe déjà » → mise à jour.
  * Avant : 4 appels à Google à chaque clic (lire + écrire, deux fois). Après : 1 appel (nouvelle carte), 0 si rien n'a changé.
  */
-export async function prepareGoogleSave(bundle: CardBundle): Promise<{ classSent: boolean; objectSent: boolean }> {
+export async function prepareGoogleSave(bundle0: CardBundle): Promise<{ classSent: boolean; objectSent: boolean }> {
+  const bundle = await avecLieux(bundle0);
   const { program, business, card } = bundle;
   const cBody = classBody(program, business);
   const oBody = objectBody(bundle);
