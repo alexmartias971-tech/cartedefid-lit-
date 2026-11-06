@@ -11,9 +11,9 @@ import type { CardBundle } from "./types";
  * messages du commerce (REVIEW_RULES.requireOptin : la page Confidentialité ne promet que les messages de service
  * aux autres).
  *
- * Quand ? La carte a au moins 3 passages (tampons / achats, non annulés) et son DERNIER passage date de 2 h à 26 h :
- * le message arrive environ 2 h après la visite. Un passage plus ancien n'est jamais relancé « à froid » : un fidèle
- * d'avant reçoit la demande 2 h après sa prochaine visite.
+ * Quand ? La carte a au moins 3 passages (tampons / achats, non annulés) et son DERNIER passage date de 1 h à 26 h :
+ * le message arrive environ 1 h après la visite (choix d'Alexandre, 6 nov. 2026 : 1 h au lieu de 2 h). Un passage plus ancien n'est jamais relancé « à froid » : un fidèle
+ * d'avant reçoit la demande 1 h après sa prochaine visite.
  * Jamais la nuit (21 h – 8 h, heure de Guadeloupe) : la demande attend le matin (toujours dans les 26 h). Si les 26 h
  * tombent la nuit, on prolonge jusqu'au lendemain 10 h, jamais plus de 36 h après le passage.
  * Google n'affiche pas plus de 3 notifications par carte en 24 h : si la carte en a déjà reçu 2, on attend le
@@ -40,7 +40,7 @@ export const REVIEW_MESSAGE =
 export const REVIEW_RULES = {
   minVisits: 3,
   /** Délai après le dernier passage. */
-  delayMs: 2 * HOUR,
+  delayMs: 1 * HOUR,
   /** Après 26 h, le passage est trop ancien (sauf prolongation du matin, voir askDeadline). */
   windowMs: 26 * HOUR,
   maxWindowMs: 36 * HOUR,
