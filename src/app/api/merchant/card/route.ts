@@ -3,9 +3,9 @@ import sharp from "sharp";
 import { computeCardState, describeProgram, designFromProgram, fieldLabels } from "@/lib/card-state";
 import { signupUrl as lienInscription } from "@/lib/env";
 import { json, pitchVous, requireManager } from "@/lib/merchant-space";
-import { renderStripFor } from "@/lib/strip";
+import { renderCardPoster, renderStripFor } from "@/lib/strip";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Business, CatalogReward, Program, Tier } from "@/lib/types";
+import type { Business, CardBundle, CatalogReward, Program, Tier } from "@/lib/types";
 
 export const maxDuration = 30;
 
@@ -90,13 +90,23 @@ export async function GET() {
         : program.mode === "points"
           ? { total: 10, filled: 6 }
           : { total: 10, filled: 0 };
-    let strip: string | null = null;
-    try {
-      const png = await renderStripFor(program, progress, 2, "apple", null, business.logo_url);
-      strip = `data:image/png;base64,${png.toString("base64")}`;
-    } catch (err) {
-      console.error("[espace card strip]", (err as Error).message);
-    }
+    // Les 3 modèles de la carte (6 nov. 2026, demande d'Alexandre : « pourquoi on ne voit qu'un seul modèle ? ») : l'iPhone (bandeau),
+    // l'iPhone récent (iOS 27, la carte en grand) et Android (image du bas). Dessinés en même temps ; un modèle qui échoue est simplement absent.
+    const essai = { program, business, card: sample, customer: { first_name: "Marie" }, tiers: sortedTiers, catalog: sortedCatalog, coupons: [] } as unknown as CardBundle;
+    const jpeg = (png: Buffer, w: number) => sharp(png).resize({ width: w, withoutEnlargement: true }).jpeg({ quality: 84 }).toBuffer();
+    const [stripR, posterR, googleR] = await Promise.allSettled([
+      renderStripFor(program, progress, 2, "apple", null, business.logo_url),
+      renderCardPoster(essai, 2).then((png) => jpeg(png, 560)),
+      renderStripFor(program, progress, 2, "google", null, business.logo_url).then((png) => jpeg(png, 640)),
+    ]);
+    const vue = (r: PromiseSettledResult<Buffer>, type: string, quoi: string) => {
+      if (r.status === "fulfilled") return `data:${type};base64,${r.value.toString("base64")}`;
+      console.error(`[espace card ${quoi}]`, (r.reason as Error)?.message);
+      return null;
+    };
+    const strip = vue(stripR, "image/png", "strip");
+    const poster = vue(posterR, "image/jpeg", "poster");
+    const google = vue(googleR, "image/jpeg", "google");
     card = {
       programName: program.name,
       mode: program.mode,
@@ -107,6 +117,8 @@ export async function GET() {
       sample: { name: "Marie", balanceValue: state.balanceValue, sentence: state.sentence, stamps: state.stamps },
       reward: program.mode === "stamps" ? program.reward_description : program.mode === "cashback" ? `${Number(program.cashback_percent)} % en cagnotte` : sortedCatalog[0]?.name ?? null,
       strip,
+      poster,
+      google,
       pitch: pitchVous(program),
       welcome: program.welcome_offer,
     };
