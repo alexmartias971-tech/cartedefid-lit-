@@ -1,10 +1,40 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { estMaCarte, memeContact, retenirCarte } from "@/lib/carte-acces";
 import { EMAIL_OK } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCard } from "@/lib/wallet-sync";
+
+type CarteLiee = { id: string; customer_id: string; loyalty_programs: { business_id: string } };
+const CARTE_LIEE = "id, customer_id, loyalty_programs!inner(business_id)";
+
+export type OuvrirState = { error?: string };
+
+/**
+ * Un téléphone sans le cookie de la carte l'ouvre en redonnant le numéro ou l'e-mail de l'inscription.
+ * shortcut: pas de compteur d'essais (aucune table à modifier), 0,5 s d'attente par erreur ; ajouter une règle Vercel Firewall si des essais en masse apparaissent.
+ */
+export async function ouvrirCarte(_prev: OuvrirState, fd: FormData): Promise<OuvrirState> {
+  const token = String(fd.get("token") ?? "");
+  const refus = { error: "Ce numéro ou cet e-mail ne correspond pas à cette carte." };
+  if (!/^[0-9a-f]{32}$/.test(token)) return refus;
+  const contact = String(fd.get("contact") ?? "").slice(0, 120);
+  const { data } = await createAdminClient()
+    .from("cards")
+    .select("customers!inner(phone, email), loyalty_programs!inner(business_id)")
+    .eq("web_token", token)
+    .maybeSingle();
+  const carte = data as unknown as { customers: { phone: string | null; email: string | null }; loyalty_programs: { business_id: string } } | null;
+  if (!carte || !memeContact(contact, carte.customers.phone, carte.customers.email)) {
+    await new Promise((r) => setTimeout(r, 500));
+    return refus;
+  }
+  await retenirCarte(carte.loyalty_programs.business_id, token);
+  redirect(`/carte/${token}`);
+}
 
 /** ok : le nom est corrigé (prenom, nom = ce qui est enregistré). error : un message à corriger. */
 export type NomState = { ok?: boolean; error?: string; prenom?: string; nom?: string };
@@ -41,8 +71,9 @@ export async function corrigerNom(_prev: NomState, fd: FormData): Promise<NomSta
   let cardId: string;
   try {
     const supabase = createAdminClient();
-    const { data: card } = await supabase.from("cards").select("id, customer_id").eq("web_token", token).maybeSingle();
-    if (!card) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
+    const { data } = await supabase.from("cards").select(CARTE_LIEE).eq("web_token", token).maybeSingle();
+    const card = data as unknown as CarteLiee | null;
+    if (!card || !(await estMaCarte(card.loyalty_programs.business_id, token))) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
     const { error } = await supabase.from("customers").update({ first_name: prenom, last_name: nom }).eq("id", card.customer_id);
     if (error) throw new Error(error.message);
     // La carte « change » (updated_at, mis à jour par la base) : le Wallet du client la redemande avec le nouveau prénom
@@ -73,8 +104,9 @@ export async function recevoirEmails(_prev: EmailState, fd: FormData): Promise<E
   if (fd.get("accord") !== "on") return { error: "Coche la case pour recevoir les bons plans par e-mail." };
   try {
     const supabase = createAdminClient();
-    const { data: card } = await supabase.from("cards").select("customer_id").eq("web_token", token).maybeSingle();
-    if (!card) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
+    const { data } = await supabase.from("cards").select(CARTE_LIEE).eq("web_token", token).maybeSingle();
+    const card = data as unknown as CarteLiee | null;
+    if (!card || !(await estMaCarte(card.loyalty_programs.business_id, token))) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
     const { error } = await supabase.from("email_optins").upsert(
       { customer_id: card.customer_id, email, source: "carte", consented_at: new Date().toISOString(), unsubscribed_at: null },
       { onConflict: "customer_id" },

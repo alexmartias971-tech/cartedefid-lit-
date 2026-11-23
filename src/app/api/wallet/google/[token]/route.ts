@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
+import { estMaCarte } from "@/lib/carte-acces";
 import { loadCardBundle } from "@/lib/cards";
 import { isGoogleConfigured } from "@/lib/env";
 import { googleSaveUrl, prepareGoogleSave } from "@/lib/google/wallet";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /** Bouton "Ajouter à Google Wallet" : crée la carte chez Google (seulement si besoin) puis envoie vers Google. */
-export async function GET(_req: Request, ctx: { params: Promise<{ token: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ token: string }> }) {
   const t0 = performance.now();
   const { token } = await ctx.params;
   if (!isGoogleConfigured()) return new Response("Google Wallet n'est pas encore configuré.", { status: 503 });
   const bundle = await loadCardBundle("web_token", token);
   if (!bundle || bundle.business.status !== "active") return new Response("Carte introuvable", { status: 404 });
+  // Le lien seul ne suffit pas pour copier la carte dans un autre Wallet
+  if (!(await estMaCarte(bundle.business.id, token))) return Response.redirect(new URL(`/carte/${token}`, req.url), 303);
   const t1 = performance.now();
 
   try {

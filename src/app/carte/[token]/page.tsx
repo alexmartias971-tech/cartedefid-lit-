@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import type { CSSProperties } from "react";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import QRCode from "qrcode";
 import { cache } from "react";
+import { manrope } from "@/components/studio/fonts";
+import { estMaCarte } from "@/lib/carte-acces";
 import { computeCardState } from "@/lib/card-state";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured, isGoogleConfigured, publicUrl } from "@/lib/env";
@@ -12,6 +15,7 @@ import { shopTheme } from "@/lib/shop-theme";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { warmWallet } from "@/lib/wallet-warm";
 import CardView from "./CardView";
+import CarteProtegee from "./CarteProtegee";
 
 type Props = { params: Promise<{ token: string }>; searchParams: Promise<{ deja?: string }> };
 
@@ -81,6 +85,11 @@ export default async function CardPage({ params, searchParams }: Props) {
   const { deja } = await searchParams;
   const bundle = await loadCard(token);
   if (!bundle) notFound();
+  // Le lien seul ne montre rien : ni nom, ni tampons, ni bouton Wallet sur un téléphone qui n'a pas prouvé que c'est sa carte
+  if (!(await estMaCarte(bundle.business.id, token))) {
+    const theme = shopTheme(bundle.program);
+    return <CarteProtegee token={token} commerce={bundle.business.name} slug={bundle.business.slug} fontClass={manrope.variable} vars={theme.vars as CSSProperties} bg={theme.bg} />;
+  }
 
   const ua = (await headers()).get("user-agent") ?? "";
   const isIOS = /iPhone|iPad|iPod/i.test(ua);

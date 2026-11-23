@@ -9,6 +9,20 @@ const nextConfig: NextConfig = {
   },
   // Adresse courte d'inscription : carte.walty.fr/ady-coffee-shop = la page /c/ady-coffee-shop (l'adresse reste affichée).
   // « fallback » : seulement quand aucune page ni aucun fichier ne répond déjà (admin, carte, m, login… gardent la priorité).
+  // La page d'une carte est personnelle : jamais indexée, jamais intégrée à un autre site, son adresse n'est pas transmise aux liens
+  async headers() {
+    return [
+      {
+        source: "/carte/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return {
       beforeFiles: [],

@@ -3,15 +3,13 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { cookieCarte, emailUnique, retenirCarte } from "@/lib/carte-acces";
 import { normalizePhone, phoneVariants } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { warmCard } from "@/lib/wallet-warm";
 
-/**
- * error : un message à corriger. retrouver : ce client a déjà une carte (même téléphone ou e-mail) mais le prénom tapé
- * ne correspond pas ; on l'aide à la retrouver (indice du prénom enregistré : première et dernière lettre, nombre de lettres).
- */
-export type SignupState = { error?: string; retrouver?: { indice: string; lettres: number } };
+/** error : un message à corriger. */
+export type SignupState = { error?: string };
 // v4 (25 oct. 2026) : le nom est demandé avec le prénom ; v3 (23 oct.) : plus de date de naissance (page confidentialité à jour)
 const POLICY_VERSION = "v5"; // v5 (29 oct. 2026) : les bons plans aussi par e-mail
 
@@ -41,29 +39,6 @@ function memePrenom(tape: string, connu: string): boolean {
   const court = Math.min(tape.length, connu.length);
   return court >= 3 && ecart(tape, connu) <= (court >= 6 ? 2 : 1);
 }
-
-/** Indice du prénom enregistré, sans le dévoiler : « Alecandre » → « A•••••••e ». */
-function indicePrenom(prenom: string | null | undefined): { indice: string; lettres: number } {
-  const lettres = [...(prenom ?? "").trim()].filter((c) => /\p{L}/u.test(c));
-  if (lettres.length === 0) return { indice: "•••", lettres: 0 };
-  const premiere = lettres[0].toUpperCase();
-  if (lettres.length <= 2) return { indice: `${premiere}•`, lettres: lettres.length };
-  return { indice: `${premiere}${"•".repeat(lettres.length - 2)}${lettres[lettres.length - 1].toLowerCase()}`, lettres: lettres.length };
-}
-
-/**
- * Gmail ignore les points et ce qui suit « + » : « jean.dupont+2@gmail.com » arrive chez « jeandupont@gmail.com ».
- * L'adresse est enregistrée sous cette forme, pour qu'une variante ne crée pas une 2e carte (et un 2e cadeau de bienvenue).
- */
-function emailUnique(email: string): string {
-  const [local, domain] = email.split("@");
-  if (!local || !domain) return email;
-  if (domain === "gmail.com" || domain === "googlemail.com") return `${local.split("+")[0].replace(/\./g, "")}@gmail.com`;
-  return email;
-}
-
-/** Le téléphone se souvient de la carte qu'il a déjà créée chez ce commerce (1 an) : pas de 2e carte depuis le même téléphone. */
-const cookieCarte = (businessId: string) => `walty_carte_${businessId.replace(/-/g, "").slice(0, 12)}`;
 
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {
@@ -124,7 +99,7 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   }
 
   // Déjà inscrit (même email ou même téléphone) ? On renvoie sa carte existante.
-  type Existing = { id: string; first_name: string | null; cards: { web_token: string }[] };
+  type Existing = { id: string; first_name: string | null; last_name: string | null; cards: { web_token: string }[] };
   let existing = null as Existing | null;
   for (const [column, value] of [
     ["email", email],
@@ -134,20 +109,23 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
     if (existing || !value) continue;
     const { data } = await supabase
       .from("customers")
-      .select("id, first_name, cards(web_token)")
+      .select("id, first_name, last_name, cards(web_token)")
       .eq("business_id", business.id)
       .in(column, column === "phone" ? phoneVariants(value) : [value])
       .limit(1)
       .maybeSingle();
     existing = (data as Existing | null) ?? null;
   }
-  // Déjà une carte : on la redonne directement si le prénom correspond aussi (« Alex » retrouve « Alexandre », une faute de
-  // frappe est tolérée). Choix d'Alexandre (15 oct. 2026) : numéro + prénom suffisent, pour que le client la retrouve seul.
-  // Sinon (25 oct.) : jamais d'impasse. On l'aide avec un indice du prénom enregistré, et la caisse peut lui renvoyer sa carte.
+  // Déjà une carte : on la redonne si le prénom ET le nom correspondent (une faute de frappe est tolérée).
+  // Sinon, aucun indice sur la personne (22 nov. 2026) : la caisse peut lui renvoyer sa carte.
   const existingCard = existing?.cards?.[0];
   if (existingCard) {
-    if (memePrenom(simple(firstName), simple(existing?.first_name))) redirect(`/carte/${existingCard.web_token}?deja=1`);
-    return { retrouver: indicePrenom(existing?.first_name) };
+    const memeNom = !existing?.last_name || memePrenom(simple(lastName), simple(existing.last_name));
+    if (memePrenom(simple(firstName), simple(existing?.first_name)) && memeNom) {
+      await retenirCarte(business.id, existingCard.web_token);
+      redirect(`/carte/${existingCard.web_token}?deja=1`);
+    }
+    return { error: "Ces coordonnées ont déjà une carte ici. Tape le prénom et le nom de l'inscription, ou demande ta carte en caisse." };
   }
 
   let customerId = existing?.id;
@@ -246,6 +224,6 @@ export async function registerCustomer(slug: string, _prev: SignupState, fd: For
   const ua = (await headers()).get("user-agent") ?? "";
   const wallet = { apple: !/Android/i.test(ua), google: !/iPhone|iPad|iPod/i.test(ua) };
   after(() => warmCard(newCardId, wallet));
-  jar.set(cookieCarte(business.id), card.web_token, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 400 * 86400 });
+  await retenirCarte(business.id, card.web_token);
   redirect(`/carte/${card.web_token}`);
 }

@@ -167,7 +167,7 @@ export async function POST(request: Request) {
   if (action === "remove_stamp") {
     if (before.program.mode !== "stamps") return json({ ok: false, error: "Cette carte ne fonctionne pas avec des tampons." }, 400);
     if (reason.length < 3) return json({ ok: false, error: "Indiquez la raison (3 caractères au moins)." }, 400);
-    const { data, error } = await supabase.rpc("merchant_remove_stamp", { p_card: before.card.id, p_scanner: session.scannerId, p_reason: reason });
+    const { data, error } = await supabase.rpc("merchant_remove_stamp", { p_card: before.card.id, p_scanner: session.scannerId, p_reason: reason, p_walty_admin: role.admin === true });
     if (error) {
       console.error("[manual remove_stamp]", error.message);
       return json({ ok: false, error: "Erreur serveur, réessayez." }, 500);
@@ -203,6 +203,7 @@ export async function POST(request: Request) {
     p_item_id: typeof item === "string" ? item : null,
     p_over_limit: overLimit,
     p_reason: overLimit ? reason : null,
+    p_walty_admin: role.admin === true, // entrée Walty depuis le CRM : preuve signée vérifiée par getMerchantRole
   });
   if (error) {
     console.error("[manual]", action, error.message);

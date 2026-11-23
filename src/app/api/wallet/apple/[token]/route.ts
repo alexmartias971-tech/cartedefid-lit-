@@ -1,16 +1,19 @@
 import { after } from "next/server";
 import { getApplePass } from "@/lib/apple/pass";
+import { estMaCarte } from "@/lib/carte-acces";
 import { loadCardBundle } from "@/lib/cards";
 import { isAppleConfigured } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /** Téléchargement de la carte Apple Wallet (bouton "Ajouter à Apple Wallet"). */
-export async function GET(_req: Request, ctx: { params: Promise<{ token: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ token: string }> }) {
   const t0 = performance.now();
   const { token } = await ctx.params;
   if (!isAppleConfigured()) return new Response("Apple Wallet n'est pas encore configuré.", { status: 503 });
   const bundle = await loadCardBundle("web_token", token);
   if (!bundle || bundle.business.status !== "active") return new Response("Carte introuvable", { status: 404 });
+  // Le lien seul ne suffit pas pour copier la carte dans un autre Wallet
+  if (!(await estMaCarte(bundle.business.id, token))) return Response.redirect(new URL(`/carte/${token}`, req.url), 303);
   const t1 = performance.now();
 
   try {
