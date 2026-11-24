@@ -3,7 +3,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { cookieCarte, emailUnique, retenirCarte } from "@/lib/carte-acces";
+import { cookieCarte, emailUnique, memePrenom, retenirCarte, simple } from "@/lib/carte-acces";
 import { normalizePhone, phoneVariants } from "@/lib/format";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { warmCard } from "@/lib/wallet-warm";
@@ -12,33 +12,6 @@ import { warmCard } from "@/lib/wallet-warm";
 export type SignupState = { error?: string };
 // v4 (25 oct. 2026) : le nom est demandé avec le prénom ; v3 (23 oct.) : plus de date de naissance (page confidentialité à jour)
 const POLICY_VERSION = "v5"; // v5 (29 oct. 2026) : les bons plans aussi par e-mail
-
-/** Prénom sans accents, majuscules, espaces ni tirets : « Jean-Éric » → « jeaneric ». */
-const simple = (s: string | null | undefined) =>
-  (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
-
-/** Nombre de lettres à changer pour passer d'un mot à l'autre (Levenshtein ; les prénoms sont courts). */
-function ecart(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/**
- * Le prénom tapé est-il celui de l'inscription ? « Alex » retrouve « Alexandre » (début), et une faute de frappe est
- * tolérée, deux pour un prénom de 6 lettres ou plus : « Alexandre » retrouve « Alecandre ».
- */
-function memePrenom(tape: string, connu: string): boolean {
-  if (!tape || !connu) return false;
-  if (tape === connu) return true;
-  if (tape.length >= 3 && connu.length >= 3 && (connu.startsWith(tape) || tape.startsWith(connu))) return true;
-  const court = Math.min(tape.length, connu.length);
-  return court >= 3 && ecart(tape, connu) <= (court >= 6 ? 2 : 1);
-}
 
 /** Inscription d'un client depuis le QR code du comptoir. */
 export async function registerCustomer(slug: string, _prev: SignupState, fd: FormData): Promise<SignupState> {

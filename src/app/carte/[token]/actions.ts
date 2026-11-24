@@ -3,13 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { estMaCarte, memeContact, retenirCarte } from "@/lib/carte-acces";
+import { estMaCarte, memeContact, memePrenom, retenirCarte, simple } from "@/lib/carte-acces";
 import { EMAIL_OK } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncCard } from "@/lib/wallet-sync";
 
-type CarteLiee = { id: string; customer_id: string; loyalty_programs: { business_id: string } };
-const CARTE_LIEE = "id, customer_id, loyalty_programs!inner(business_id)";
+type CarteLiee = { id: string; customer_id: string; customers: { first_name: string | null; last_name: string | null }; loyalty_programs: { business_id: string } };
+const CARTE_LIEE = "id, customer_id, customers!inner(first_name, last_name), loyalty_programs!inner(business_id)";
 
 export type OuvrirState = { error?: string };
 
@@ -51,6 +51,8 @@ const propre = (v: FormDataEntryValue | null) =>
 /** Ce qui n'a rien à faire dans un prénom ou un nom (chiffres, adresses, symboles) : il s'affiche sur la carte Wallet. */
 const INTERDIT = /[0-9@<>/\\{}[\]=_#$%^*|~`+:;!?"()&]|https?|www\./i;
 
+const nomProche = (neuf: string, ancien: string | null) => !ancien || neuf === ancien || memePrenom(simple(neuf), simple(ancien));
+
 /**
  * Le client corrige son prénom ou son nom depuis la page de sa carte (demande d'Alexandre, 25 oct. 2026 : « Alecandre » au lieu
  * d'« Alexandre », une faute de frappe à l'inscription). Le lien de la carte (web_token) est son accès : c'est la même clé que
@@ -74,6 +76,11 @@ export async function corrigerNom(_prev: NomState, fd: FormData): Promise<NomSta
     const { data } = await supabase.from("cards").select(CARTE_LIEE).eq("web_token", token).maybeSingle();
     const card = data as unknown as CarteLiee | null;
     if (!card || !(await estMaCarte(card.loyalty_programs.business_id, token))) return { error: "Carte introuvable : rouvre-la depuis ton lien." };
+    // Une faute de frappe, oui. Un autre nom, non : sinon la personne qui a le lien et le numéro remplace le propriétaire (22 nov. 2026).
+    // shortcut: plusieurs petites corrections à la suite peuvent encore éloigner le nom ; un code SMS à l'ouverture fermerait ce cas.
+    if (!nomProche(prenom, card.customers.first_name) || !nomProche(nom, card.customers.last_name)) {
+      return { error: "Ici, tu peux seulement corriger une faute de frappe. Si ce n'est pas ta carte, inscris-toi avec ton propre numéro." };
+    }
     const { error } = await supabase.from("customers").update({ first_name: prenom, last_name: nom }).eq("id", card.customer_id);
     if (error) throw new Error(error.message);
     // La carte « change » (updated_at, mis à jour par la base) : le Wallet du client la redemande avec le nouveau prénom
