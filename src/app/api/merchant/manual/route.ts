@@ -24,8 +24,8 @@ import { COUNTER_ACTIONS, syncCard } from "@/lib/wallet-sync";
  * n'est pas touché (seul le compteur en cours baisse). Fonction de la base merchant_remove_stamp (migration 019) :
  * événement « Tampon retiré » (-1, raison) dans l'historique, noté dans merchant_manual_actions, carte du téléphone mise à jour.
  */
-type Action = "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo" | "remove_stamp";
-const ACTIONS: Action[] = ["lookup", "stamp", "redeem", "purchase", "cashback", "reward", "coupon", "undo", "remove_stamp"];
+type Action = "lookup" | "stamp" | "redeem" | "purchase" | "cashback" | "reward" | "coupon" | "undo" | "remove_stamp" | "delete_customer";
+const ACTIONS: Action[] = ["lookup", "stamp", "redeem", "purchase", "cashback", "reward", "coupon", "undo", "remove_stamp", "delete_customer"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NO_STORE = { "Cache-Control": "no-store" };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
@@ -140,6 +140,27 @@ export async function POST(request: Request) {
       .maybeSingle(),
   ]);
   if (!customer) return json({ ok: false, error: "Client introuvable." }, 404);
+
+  // Supprimer un client (compte gérant ou entrée Walty, jamais un code PIN) : définitif, le mot de confirmation est revérifié ici.
+  // La base efface avec lui sa carte, ses passages, ses cadeaux et ses accords.
+  if (action === "delete_customer") {
+    if (body.confirm !== "SUPPRIMER") return json({ ok: false, error: "Écrivez SUPPRIMER pour confirmer." }, 400);
+    const { error } = await supabase.from("customers").delete().eq("id", customerId).eq("business_id", session.businessId);
+    if (error) {
+      console.error("[manual delete_customer]", error.message);
+      return json({ ok: false, error: "Erreur serveur, réessayez." }, 500);
+    }
+    // Une trace pour Walty, sans les coordonnées du client
+    const { data: fiche } = await supabase.from("crm_leads").select("id").eq("business_id", session.businessId).limit(1).maybeSingle();
+    if (fiche) {
+      const { error: trace } = await supabase
+        .from("crm_events")
+        .insert({ lead_id: fiche.id, kind: "note", body: `Un client supprimé de la carte par ${role.admin ? "Walty" : "le gérant"}.` });
+      if (trace) console.error("[manual delete_customer trace]", trace.message);
+    }
+    return json({ ok: true, done: "Client supprimé ✓", deleted: true });
+  }
+
   const before = cardRow ? await loadCardBundle("id", cardRow.id) : null;
   if (!before || before.program.business_id !== session.businessId) {
     return json({ ok: false, error: "Ce client n'a pas encore de carte." }, 404);
